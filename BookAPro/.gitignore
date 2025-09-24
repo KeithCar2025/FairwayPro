@@ -1,6 +1,21 @@
+# Dependencies
 node_modules
+
+# Build output
 dist
+
+# Mac system files
 .DS_Store
+
+# Public uploads (if you don’t want to commit them)
 server/public
+
+# Vite config variations
 vite.config.ts.*
+
+# Archives
 *.tar.gz
+
+# Environment files
+.env
+.env.*
