@@ -3,6 +3,8 @@ import { pgTable, text, varchar, integer, decimal, timestamp, boolean } from "dr
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { createInsertSchema } from "drizzle-zod";
+import { coaches } from "./tables"; // your Drizzle table
 
 // Base users table for authentication
 export const users = pgTable("users", {
@@ -253,11 +255,17 @@ export const insertStudentSchema = createInsertSchema(students).omit({
   createdAt: true,
 });
 
-export const insertCoachSchema = createInsertSchema(coaches).omit({
+const baseCoachSchema = createInsertSchema(coaches).omit({
   id: true,
   createdAt: true,
   rating: true,
   reviewCount: true,
+});
+
+// Step 2: extend it properly
+export const insertCoachSchema = z.object({
+  ...baseCoachSchema.shape,
+  pricePerHour: z.number(),
 });
 
 export const insertBookingSchema = createInsertSchema(bookings).omit({

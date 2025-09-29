@@ -1,15 +1,54 @@
+import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
+import session from "express-session";
+import ConnectPgSimple from "connect-pg-simple";
+import { pool } from "./db"; // Make sure pool is the shared PG pool!
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { supabase } from "./supabase"; // your supabase client
 
 const app = express();
+
+// --- Essential Middleware ---
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// --- CORS: Allow frontend to send cookies for session auth ---
+app.use(cors({
+  origin: process.env.FRONTEND_URL || "http://localhost:3000",
+  credentials: true,
+}));
+
+// --- Session: Store sessions in Postgres ---
+const PgSession = ConnectPgSimple(session);
+app.use(
+  session({
+    store: new PgSession({
+      pool: pool, // Use the shared PG pool!
+      tableName: "session",
+      createTableIfMissing: true,
+    }),
+    secret: process.env.SESSION_SECRET || "dev-secret",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      maxAge: 24 * 60 * 60 * 1000,
+      secure: false, // ONLY true in production with HTTPS!
+      httpOnly: true,
+      sameSite: "lax",
+    },
+  })
+);
+
+// --- Health Check Route ---
+app.get("/healthz", (_req, res) => res.send("OK"));
+
+// --- Logging Middleware ---
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+  let capturedJsonResponse: Record<string, any> | undefined;
 
   const originalResJson = res.json;
   res.json = function (bodyJson, ...args) {
@@ -21,14 +60,8 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
+      if (capturedJsonResponse) logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      if (logLine.length > 80) logLine = logLine.slice(0, 79) + "…";
       log(logLine);
     }
   });
@@ -36,36 +69,54 @@ app.use((req, res, next) => {
   next();
 });
 
-(async () => {
-  const server = await registerRoutes(app);
+// --- Supabase JWT Middleware (optional, for API key auth) ---
+// If you only use session-based auth, you can remove this.
+// If you support both session and token auth, keep it!
+app.use(async (req: Request, res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return next();
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+  const token = authHeader.replace("Bearer ", "");
+  const { data: { user }, error } = await supabase.auth.getUser(token);
 
-    res.status(status).json({ message });
-    throw err;
-  });
-
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
+  if (error) {
+    console.warn("Supabase auth error:", error.message);
+    return next();
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
-    log(`serving on port ${port}`);
-  });
+  // Attach the user to the request
+  (req as any).user = user;
+  next();
+});
+
+(async () => {
+  try {
+    // --- Register all API and app routes ---
+    await registerRoutes(app);
+
+    // --- Error Handling Middleware ---
+    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+      console.error(err);
+      const status = err.status || err.statusCode || 500;
+      const message = err.message || "Internal Server Error";
+      res.status(status).json({ message, stack: err.stack });
+    });
+
+    // --- Serve SPA/static files ---
+    if (app.get("env") === "development") {
+      await setupVite(app);
+    } else {
+      serveStatic(app);
+    }
+
+    const port = parseInt(process.env.PORT || "5000", 10);
+    const host = process.env.HOST || "0.0.0.0";
+
+    app.listen(port, host, () => {
+      log(`Server running on http://${host}:${port}`);
+    });
+  } catch (err) {
+    console.error("Server bootstrap failed:", err);
+    process.exit(1);
+  }
 })();

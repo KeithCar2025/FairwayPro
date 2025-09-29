@@ -90,9 +90,18 @@ export default function AdminDashboard() {
   const [emailForm, setEmailForm] = useState({ email: "", message: "" });
 
   // Check if user is admin
-  const { data: adminStatus } = useQuery<AdminStatus>({
-    queryKey: ["/api/admin/check"],
-  });
+const { data: adminStatus, isLoading, error } = useQuery<AdminStatus>({
+  queryKey: ["/api/admin/check"],
+  queryFn: async () => {
+    const response = await fetch("/api/admin/check", {
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to check admin status: ${response.statusText}`);
+    }
+    return response.json();
+  },
+});
 
   // Get pending coaches
   const { data: pendingCoaches, isLoading: loadingPending } = useQuery<PendingCoach[]>({

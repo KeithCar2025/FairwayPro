@@ -10,10 +10,10 @@ import { Eye, EyeOff, Mail, Lock, User } from "lucide-react";
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAuth: (type: 'login' | 'signup', data: any) => void;
+  // remove onAuth, we'll handle internally
 }
 
-export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
+export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [loginData, setLoginData] = useState({ email: "", password: "" });
   const [signupData, setSignupData] = useState({ 
@@ -22,21 +22,59 @@ export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
     password: "", 
     confirmPassword: "" 
   });
+  const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    onAuth('login', loginData);
-    console.log("Login attempt:", loginData);
+    setError(null);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include", // CRITICAL FOR SESSIONS
+        body: JSON.stringify(loginData),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // Optionally: notify parent, close modal, update global auth state
+        onClose();
+        window.location.reload(); // or trigger your own "logged in" logic
+      } else {
+        setError(data.error || "Login failed");
+      }
+    } catch (err) {
+      setError("Login failed");
+    }
   };
 
-  const handleSignup = (e: React.FormEvent) => {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     if (signupData.password !== signupData.confirmPassword) {
-      console.log("Passwords don't match");
+      setError("Passwords don't match");
       return;
     }
-    onAuth('signup', signupData);
-    console.log("Signup attempt:", signupData);
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          email: signupData.email,
+          password: signupData.password,
+          name: signupData.name,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        onClose();
+        window.location.reload(); // or update auth state
+      } else {
+        setError(data.error || "Signup failed");
+      }
+    } catch (err) {
+      setError("Signup failed");
+    }
   };
 
   const handleSocialLogin = (provider: string) => {
@@ -99,6 +137,10 @@ export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                   </button>
                 </div>
               </div>
+
+              {error && (
+                <div className="text-red-500 text-sm text-center">{error}</div>
+              )}
 
               <Button type="submit" className="w-full" data-testid="button-login-submit">
                 Sign In
@@ -188,6 +230,10 @@ export default function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                   />
                 </div>
               </div>
+
+              {error && (
+                <div className="text-red-500 text-sm text-center">{error}</div>
+              )}
 
               <Button type="submit" className="w-full" data-testid="button-signup-submit">
                 Create Account

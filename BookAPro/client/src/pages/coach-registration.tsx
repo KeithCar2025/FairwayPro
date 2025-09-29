@@ -22,6 +22,8 @@ import type { UploadResult } from "@uppy/core";
 
 // Validation schema for coach registration
 const coachRegistrationSchema = z.object({
+email: z.string().email("Invalid email address"),
+  password: z.string().min(4, "Password must be at least 6 characters"),
   name: z.string().min(2, "Name must be at least 2 characters"),
   bio: z.string().min(50, "Bio must be at least 50 characters").max(500, "Bio must be less than 500 characters"),
   location: z.string().min(3, "Location is required"),
@@ -31,7 +33,7 @@ const coachRegistrationSchema = z.object({
   responseTime: z.string().min(1, "Response time is required"),
   availability: z.string().min(1, "Availability is required"),
   googleReviewsUrl: z.string().url("Please enter a valid Google Reviews URL").optional().or(z.literal("")),
-  image: z.string().optional(),
+  image: z.string().optional().default(""),
   latitude: z.coerce.number().optional(),
   longitude: z.coerce.number().optional(),
 });
@@ -90,70 +92,99 @@ export default function CoachRegistration() {
   const [profileImageUrl, setProfileImageUrl] = useState<string>("");
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
-  const form = useForm<CoachRegistrationForm>({
-    resolver: zodResolver(coachRegistrationSchema),
-    defaultValues: {
-      name: "",
-      bio: "",
-      location: "",
-      pricePerHour: 75,
-      yearsExperience: 5,
-      pgaCertificationId: "",
-      responseTime: "Within 24 hours",
-      availability: "Available this week",
-      googleReviewsUrl: "",
-      image: profileImageUrl,
-      latitude: undefined,
-      longitude: undefined,
-    },
-  });
+const form = useForm<CoachRegistrationForm & { email: string; password: string }>({
+  resolver: zodResolver(coachRegistrationSchema),
+  defaultValues: {
+    email: "",
+    password: "",
+    name: "",
+    bio: "",
+    location: "",
+    pricePerHour: 75,
+    yearsExperience: 5,
+    pgaCertificationId: "",
+    responseTime: "Within 24 hours",
+    availability: "Available this week",
+    googleReviewsUrl: "",
+    image: profileImageUrl,
+    latitude: undefined,
+    longitude: undefined,
+  },
+});
 
   // Coach registration mutation
-  const registerCoachMutation = useMutation({
-    mutationFn: async (data: any) => {
-      const response = await fetch('/api/coaches/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-        credentials: 'include',
-      });
+const registerCoachMutation = useMutation({
+  mutationFn: async (data: any) => {
+    const response = await fetch('/api/coaches/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      credentials: 'include',
+    });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Registration failed');
-      }
+    const result = await response.json();
+    console.log("Backend response:", result, "Status:", response.status);
+	if (!response.ok) {
+  console.error('Non-2xx response:', response.status, result);
+}
 
-      return response.json();
-    },
-    onSuccess: (data: any) => {
+    // Throw only if server returns an error
+if (!response.ok) {
+  throw new Error(result.error || 'Registration failed');
+}
+if (typeof result.error === 'string' && result.error) {
+  throw new Error(result.error);
+}
+
+    return result;
+  },
+
+onSuccess: (data: any) => {
+      console.log("Mutation success:", data);
+
+      // Show toast before navigation
       toast({
         title: "Registration Submitted!",
         description: data.message || "Your coach profile is pending admin approval. You will be notified once approved.",
         duration: 5000,
       });
-      setLocation('/');
-      queryClient.invalidateQueries({ queryKey: ['/api/coaches/search'] });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Registration Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
 
-  const handleSubmit = async (data: CoachRegistrationForm) => {
-    const completeData = {
-      ...data,
-      specialties: selectedSpecialties,
-      tools: selectedTools,
-      certifications: selectedCertifications,
-      videos: videos,
-    };
+      // Use SPA navigation so the toast persists after navigation
+      setTimeout(() => {
+        setLocation("/"); // Wouter SPA navigation, doesn't reload the page
+      }, 1200); // Give user ~1s to see the toast before navigating
 
-    registerCoachMutation.mutate(completeData);
+
+    queryClient.invalidateQueries({ queryKey: ['/api/coaches/search'] });
+  },
+
+  onError: (error: Error) => {
+    console.error("Mutation error:", error);
+    toast({
+      title: "Registration Failed",
+      description: error.message,
+      variant: "destructive",
+    });
+  },
+});
+
+const handleSubmit = async (data: CoachRegistrationForm & { email: string; password: string }) => {
+  console.log("Form submitted:", data);
+  const completeData = {
+    email: data.email,
+    password: data.password,
+    ...data,
+    specialties: selectedSpecialties,
+    tools: selectedTools,
+    certifications: selectedCertifications,
+    videos: videos,
+    image: profileImageUrl,
   };
+
+  registerCoachMutation.mutate(completeData);
+};
+
+
 
   const addSpecialty = (specialty: string) => {
     if (!selectedSpecialties.includes(specialty)) {
@@ -245,7 +276,8 @@ export default function CoachRegistration() {
           if (response.ok) {
             const { objectPath } = await response.json();
             setProfileImageUrl(objectPath);
-            form.setValue('image', objectPath);
+            form.setValue('image', objectPath, { shouldValidate: true });
+setProfileImageUrl(objectPath);
             toast({
               title: "Profile Image Uploaded",
               description: "Your profile image has been uploaded successfully.",
@@ -374,15 +406,15 @@ export default function CoachRegistration() {
             </p>
           </div>
 
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleSubmit)}>
-              <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-4">
-                  <TabsTrigger value="profile" data-testid="tab-profile">Profile</TabsTrigger>
-                  <TabsTrigger value="expertise" data-testid="tab-expertise">Expertise</TabsTrigger>
-                  <TabsTrigger value="tools" data-testid="tab-tools">Tools & Certs</TabsTrigger>
-                  <TabsTrigger value="content" data-testid="tab-content">Content</TabsTrigger>
-                </TabsList>
+
+            <Form {...form} onSubmit={form.handleSubmit(handleSubmit)}>
+            <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full">
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="profile">Profile</TabsTrigger>
+                <TabsTrigger value="expertise">Expertise</TabsTrigger>
+                <TabsTrigger value="tools">Tools & Certs</TabsTrigger>
+                <TabsTrigger value="content">Content</TabsTrigger>
+              </TabsList>
 
                 <TabsContent value="profile" className="mt-6">
                   <Card>
@@ -396,6 +428,33 @@ export default function CoachRegistration() {
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
+					<FormField
+  control={form.control}
+  name="email"
+  render={({ field }) => (
+    <FormItem>
+      <FormLabel>Email *</FormLabel>
+      <FormControl>
+        <Input placeholder="you@example.com" {...field} />
+      </FormControl>
+      <FormMessage />
+    </FormItem>
+  )}
+/>
+
+<FormField
+  control={form.control}
+  name="password"
+  render={({ field }) => (
+    <FormItem>
+      <FormLabel>Password *</FormLabel>
+      <FormControl>
+        <Input type="password" placeholder="********" {...field} />
+      </FormControl>
+      <FormMessage />
+    </FormItem>
+  )}
+/>
                       <FormField
                         control={form.control}
                         name="name"
@@ -970,18 +1029,30 @@ export default function CoachRegistration() {
                       Next
                     </Button>
                   ) : (
-                    <Button
-                      type="submit"
-                      disabled={registerCoachMutation.isPending}
-                      data-testid="button-submit"
-                    >
-                      {registerCoachMutation.isPending ? "Creating Profile..." : "Complete Registration"}
-                    </Button>
+<Button
+  type="button" // Not "submit"
+  onClick={form.handleSubmit((data) => {
+    console.log("Form submitted via onClick:", data);
+
+    const completeData = {
+      ...data,
+      specialties: selectedSpecialties,
+      tools: selectedTools,
+      certifications: selectedCertifications,
+      videos: videos,
+      image: profileImageUrl,
+    };
+
+    registerCoachMutation.mutate(completeData);
+  })}
+>
+  Complete Registration
+</Button>
                   )}
                 </div>
               </div>
-            </form>
-          </Form>
+            </Form>
+      
         </div>
       </div>
     </div>
