@@ -90,42 +90,63 @@ export default function AdminDashboard() {
   const [emailForm, setEmailForm] = useState({ email: "", message: "" });
 
   // Check if user is admin
-const { data: adminStatus, isLoading, error } = useQuery<AdminStatus>({
-  queryKey: ["/api/admin/check"],
-  queryFn: async () => {
-    const response = await fetch("/api/admin/check", {
-      credentials: "include",
-    });
-    if (!response.ok) {
-      throw new Error(`Failed to check admin status: ${response.statusText}`);
-    }
-    return response.json();
-  },
-});
+  const { data: adminStatus, isLoading, error } = useQuery<AdminStatus>({
+    queryKey: ["/api/admin/check"],
+    queryFn: async () => {
+      const response = await fetch("/api/admin/check", { credentials: "include" });
+      if (!response.ok) throw new Error(`Failed to check admin status: ${response.statusText}`);
+      return response.json();
+    },
+  });
 
   // Get pending coaches
-  const { data: pendingCoaches, isLoading: loadingPending } = useQuery<PendingCoach[]>({
+  const { data: pendingCoaches, isLoading: loadingPending, error: errorPending } = useQuery<PendingCoach[]>({
     queryKey: ["/api/admin/pending-coaches"],
+    queryFn: async () => {
+      const response = await fetch("/api/admin/pending-coaches", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch pending coaches");
+      return response.json();
+    },
   });
 
   // Get all bookings
-  const { data: bookings, isLoading: loadingBookings } = useQuery<Booking[]>({
+  const { data: bookings, isLoading: loadingBookings, error: errorBookings } = useQuery<Booking[]>({
     queryKey: ["/api/admin/bookings"],
+    queryFn: async () => {
+      const response = await fetch("/api/admin/bookings", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch bookings");
+      return response.json();
+    },
   });
 
   // Get all coaches
-  const { data: coaches, isLoading: loadingCoaches } = useQuery<Coach[]>({
+  const { data: coaches, isLoading: loadingCoaches, error: errorCoaches } = useQuery<Coach[]>({
     queryKey: ["/api/admin/coaches"],
+    queryFn: async () => {
+      const response = await fetch("/api/admin/coaches", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch coaches");
+      return response.json();
+    },
   });
 
   // Get all students
-  const { data: students, isLoading: loadingStudents } = useQuery<Student[]>({
+  const { data: students, isLoading: loadingStudents, error: errorStudents } = useQuery<Student[]>({
     queryKey: ["/api/admin/students"],
+    queryFn: async () => {
+      const response = await fetch("/api/admin/students", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch students");
+      return response.json();
+    },
   });
 
   // Get admin actions log
-  const { data: adminActions } = useQuery<AdminAction[]>({
+  const { data: adminActions, isLoading: loadingActions, error: errorActions } = useQuery<AdminAction[]>({
     queryKey: ["/api/admin/actions"],
+    queryFn: async () => {
+      const response = await fetch("/api/admin/actions", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch admin actions");
+      return response.json();
+    },
   });
 
   // Approve coach mutation
@@ -232,6 +253,8 @@ const { data: adminStatus, isLoading, error } = useQuery<AdminStatus>({
     },
   });
 
+  if (isLoading) return <div>Loading admin status...</div>;
+  if (error) return <div>Error checking admin status: {error.message}</div>;
   if (!adminStatus?.isAdmin) {
     return (
       <div className="container mx-auto px-4 py-8">
@@ -317,6 +340,8 @@ const { data: adminStatus, isLoading, error } = useQuery<AdminStatus>({
             <CardContent>
               {loadingPending ? (
                 <div className="text-center py-8">Loading pending coaches...</div>
+              ) : errorPending ? (
+                <div className="text-center py-8 text-red-500">Error loading pending coaches: {errorPending.message}</div>
               ) : pendingCoaches?.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   No pending coach approvals
@@ -392,6 +417,8 @@ const { data: adminStatus, isLoading, error } = useQuery<AdminStatus>({
             <CardContent>
               {loadingBookings ? (
                 <div className="text-center py-8">Loading bookings...</div>
+              ) : errorBookings ? (
+                <div className="text-center py-8 text-red-500">Error loading bookings: {errorBookings.message}</div>
               ) : bookings?.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   No bookings found
@@ -444,6 +471,8 @@ const { data: adminStatus, isLoading, error } = useQuery<AdminStatus>({
             <CardContent>
               {loadingCoaches ? (
                 <div className="text-center py-8">Loading coaches...</div>
+              ) : errorCoaches ? (
+                <div className="text-center py-8 text-red-500">Error loading coaches: {errorCoaches.message}</div>
               ) : coaches?.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   No coaches found
@@ -520,6 +549,8 @@ const { data: adminStatus, isLoading, error } = useQuery<AdminStatus>({
             <CardContent>
               {loadingStudents ? (
                 <div className="text-center py-8">Loading students...</div>
+              ) : errorStudents ? (
+                <div className="text-center py-8 text-red-500">Error loading students: {errorStudents.message}</div>
               ) : students?.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   No students found
@@ -636,7 +667,11 @@ const { data: adminStatus, isLoading, error } = useQuery<AdminStatus>({
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {adminActions?.length === 0 ? (
+              {loadingActions ? (
+                <div className="text-center py-8">Loading activity logs...</div>
+              ) : errorActions ? (
+                <div className="text-center py-8 text-red-500">Error loading logs: {errorActions.message}</div>
+              ) : adminActions?.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   No activity logs found
                 </div>

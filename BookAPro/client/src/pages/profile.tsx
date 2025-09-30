@@ -169,6 +169,15 @@ export default function Profile() {
     }
   };
 
+ const handleEditProfile = () => {
+  if (currentUser?.role === "coach") {
+    setLocation("/coach/edit-profile");
+  } else if (currentUser?.role === "student") {
+    setLocation("/student/edit-profile");
+  }
+  // Optionally handle admin or other roles
+};
+
   const getUserDisplayName = () => {
     if (studentProfile) return studentProfile.name;
     if (coachProfile) return coachProfile.name;
@@ -237,11 +246,22 @@ export default function Profile() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" data-testid="button-edit-profile">
+                {/* Call the edit profile page based on role */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="button-edit-profile"
+                  onClick={handleEditProfile}
+                >
                   <Edit className="w-4 h-4 mr-2" />
                   Edit Profile
                 </Button>
-                <Button variant="outline" size="sm" onClick={handleSignOut} data-testid="button-signout-profile">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSignOut}
+                  data-testid="button-signout-profile"
+                >
                   <LogOut className="w-4 h-4 mr-2" />
                   Sign Out
                 </Button>

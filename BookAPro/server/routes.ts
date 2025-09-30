@@ -12,6 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import express from "express";
 import fs from "fs";
+import CoachEditProfile from "@/components/CoachEditProfile";
 import cors from "cors";
 import {
   insertUserSchema,
@@ -210,15 +211,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/admin/pending-coaches", isAdmin, async (_req, res) => res.json(await storage.getPendingCoaches()));
-  app.post("/api/admin/approve-coach/:id", isAdmin, async (req, res) => {
-    try {
-      const coach = await storage.approveCoach(req.params.id, req.user.id);
-      res.json(coach);
-    } catch (error) {
-      console.error("Approve coach error:", error);
-      res.status(500).json({ error: "Failed to approve coach" });
-    }
-  });
+app.post("/api/admin/approve-coach/:id", isAdmin, async (req, res) => {
+  try {
+    const coach = await storage.approveCoach(req.params.id, req.user?.id);
+    res.json({ success: true, coach });
+  } catch (error) {
+    console.error("Approve coach error:", error);
+    res.status(500).json({ error: "Failed to approve coach", details: error.message });
+  }
+});
 
   app.post("/api/admin/reject-coach/:id", isAdmin, async (req, res) => {
     try {
@@ -304,10 +305,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(400).json({ error: "Coach registration failed", details: err.errors ?? err });
     }
   });
+app.get("/api/coaches/me", async (req, res) => {
+  const userId = (req.session as any)?.userId; // THIS SHOULD BE THE USER ID STRING
+  console.log("DEBUG /api/coaches/me userId from session:", userId);
 
+  try {
+    const coach = await storage.getCoachWithDetailsByUserId(userId);
+    if (!coach) return res.status(404).json({ error: "Coach not found" });
+    res.json(coach);
+  } catch (error) {
+    console.error("Get coach by userId error:", error);
+    res.status(500).json({ error: "Failed to fetch coach profile", details: error.message });
+  }
+});
   app.get("/api/coaches/:id", async (req, res) => {
     try {
-      const coach = await storage.getCoachWithDetails(req.params.id);
+      const coach = await storage.getCoachWithDetailsByUserId(req.params.id);
       if (!coach) return res.status(404).json({ error: "Coach not found" });
       res.json(coach);
     } catch (error) {
@@ -315,6 +328,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to fetch coach" });
     }
   });
+
+
 
   app.put("/api/coaches/:id", async (req, res) => {
     try {
@@ -560,6 +575,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to send message" });
     }
   });
+  
    // --- STATIC SERVING (ALWAYS LAST) ---
   const publicDir = path.join(__dirname, "public"); // dist/public
   const publicIndex = path.join(publicDir, "index.html");

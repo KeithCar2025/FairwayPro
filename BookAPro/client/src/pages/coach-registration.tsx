@@ -19,6 +19,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import type { UploadResult } from "@uppy/core";
+import LocationAutocomplete from "@/components/LocationAutocomplete";
 
 // Validation schema for coach registration
 const coachRegistrationSchema = z.object({
@@ -492,22 +493,29 @@ setProfileImageUrl(objectPath);
                       />
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <FormField
-                          control={form.control}
-                          name="location"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="flex items-center gap-2">
-                                <MapPin className="w-4 h-4" />
-                                Location *
-                              </FormLabel>
-                              <FormControl>
-                                <Input placeholder="Pine Valley Golf Club" {...field} data-testid="input-location" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+<FormField
+  control={form.control}
+  name="location"
+  render={({ field }) => (
+    <FormItem>
+      <FormLabel className="flex items-center gap-2">
+        <MapPin className="w-4 h-4" />
+        Location *
+      </FormLabel>
+      <FormControl>
+        <LocationAutocomplete
+          value={field.value}
+          onChange={(locObj) => {
+            field.onChange(locObj.location); // sets the location string
+            form.setValue("latitude", locObj.latitude, { shouldValidate: true });
+            form.setValue("longitude", locObj.longitude, { shouldValidate: true });
+          }}
+        />
+      </FormControl>
+      <FormMessage />
+    </FormItem>
+  )}
+/>
 
                         <FormField
                           control={form.control}

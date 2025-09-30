@@ -57,7 +57,12 @@ export class DatabaseStorage implements IStorage {
 async getApprovedCoaches(): Promise<Coach[]> {
   const { data, error } = await supabase
     .from('coaches')
-    .select('*')
+    .select(`
+      *,
+      coach_specialties (specialty),
+      coach_tools (tool),
+      coach_certifications (certification)
+    `)
     .eq('approval_status', 'approved');
 
   if (error) throw error;
@@ -68,17 +73,17 @@ async getApprovedCoaches(): Promise<Coach[]> {
     email: coach.email,
     bio: coach.bio,
     location: coach.location,
-    pricePerHour: coach.price_per_hour,
-    yearsExperience: coach.years_experience,
+    pricePerHour: coach.price_per_hour,             // <-- correct spelling
+    yearsExperience: coach.years_experiance,        // <-- correct spelling
     image: coach.image,
     createdAt: coach.created_at,
     approvalStatus: coach.approval_status,
     userId: coach.user_id,
-    specialties: coach.specialties || [],
-    tools: coach.tools || [],
-    certifications: coach.certifications || [],
+    specialties: coach.coach_specialties?.map((s: any) => s.specialty) || [],
+    tools: coach.coach_tools?.map((t: any) => t.tool) || [],
+    certifications: coach.coach_certifications?.map((c: any) => c.certification) || [],
     videos: coach.videos || [],
-    responseTime: coach.response_time || 'Unknown',
+    responseTime: coach.response_time || 'Unknown', // <-- correct spelling
     availability: coach.availability || 'Available soon',
     reviewCount: coach.review_count || 0,
   }));
@@ -143,8 +148,9 @@ async getApprovedCoaches(): Promise<Coach[]> {
 // ------------------ Admin Lists ------------------
 async getAllStudents(): Promise<Student[]> {
   const { data, error } = await supabase
-    .from('students')
+    .from('users')
     .select('*')
+    .eq('role', 'student')
     .order('created_at', { ascending: false });
 
   if (error) throw error;
@@ -246,6 +252,37 @@ async rejectCoach(coachId: string, adminId: string): Promise<Coach> {
     if (error) throw error;
     await this.logAdminAction(adminId, 'delete_coach', 'coach', coachId);
   }
+async getCoachByUserId(userId: string) {
+  const { data, error } = await supabase
+    .from('coaches')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async getCoachWithDetailsByUserId(userId: string) {
+  console.log("DEBUG getCoachWithDetailsByUserId called with userId:", userId);
+
+  const { data, error } = await supabase
+    .from('coaches')
+    .select(`
+      *,
+      coach_specialties (specialty),
+      coach_tools (tool),
+      coach_certifications (certification),
+      coach_videos (*)
+    `)
+    .eq('user_id', userId)
+    .single();
+
+  console.log("DEBUG getCoachWithDetailsByUserId query result:", { data, error });
+
+  if (error?.code === 'PGRST116') return null;
+  if (error) throw error;
+  return data;
+}
 
   // ------------------ Students ------------------
   async getStudent(id: string): Promise<Student | undefined> {
@@ -394,6 +431,15 @@ async getPendingCoaches(): Promise<any[]> {
       .order('createdAt', { ascending: true });
     return error ? [] : (data as Message[]);
   }
+  async getUnreadMessagesCount(userId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from('messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('receiverId', userId)
+    .eq('isRead', false);
+  if (error) throw error;
+  return count ?? 0;
+}
 
   // ------------------ Coach Specialties ------------------
   async createCoachSpecialty(coachId: string, specialty: string): Promise<void> {
@@ -426,6 +472,6 @@ async getPendingCoaches(): Promise<any[]> {
       .insert({ id: uuidv4(), coach_id: coachId, ...video });
     if (error) throw error;
   }
-}
+} 
 
 export const storage = new DatabaseStorage();

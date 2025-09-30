@@ -17,8 +17,15 @@ import femaleCoachImage from "@assets/generated_images/Female_golf_coach_headsho
 import seniorCoachImage from "@assets/generated_images/Senior_golf_coach_headshot_d3798356.png";
 
 import { Switch, Route } from "wouter";
+
+// Import all pages from client/src/pages/ as shown in ![image1](image1)
+import AdminDashboard from "@/pages/admin-dashboard";
 import CoachRegistration from "@/pages/coach-registration";
-import AdminDashboard from "@/pages/admin-dashboard"; 
+import Inbox from "@/pages/inbox";
+import MyBookings from "@/pages/my-bookings";
+import NotFound from "@/pages/not-found";
+import Profile from "@/pages/profile";
+import CoachEditProfile from "@/components/CoachEditProfile";
 
 // ------------------ Mock Coaches (keep for now) ------------------
 const mockCoaches: Coach[] = [
@@ -58,7 +65,16 @@ function App() {
         <Switch>
           <Route path="/" component={HomePage} />
           <Route path="/coach-registration" component={CoachRegistration} />
-		  <Route path="/admin" component={AdminDashboard} />
+          <Route path="/admin" component={AdminDashboard} />
+          <Route path="/inbox" component={Inbox} />
+          <Route path="/my-bookings" component={MyBookings} />
+          <Route path="/profile" component={Profile} />
+          <Route path="/404" component={NotFound} />
+		  <Route path="/coach/edit-profile" component={CoachEditProfile} />
+          {/* Optionally, catch all unmatched routes */}
+          <Route>
+            <NotFound />
+          </Route>
         </Switch>
         <Footer />
       </TooltipProvider>
@@ -84,41 +100,40 @@ function HomePage() {
     sortBy: "distance",
   });
 
-
-
   // ------------------ Fetch approved coaches ------------------
-  const { data: approvedCoaches = [], isLoading, error } = useQuery<Coach[]>({
-    queryKey: ["approvedCoaches"],
-    queryFn: async () => {
-      const res = await fetch("/api/coaches");
-      if (!res.ok) throw new Error("Failed to fetch coaches from server");
-      const data = await res.json();
+const { data: approvedCoaches = [], isLoading, error } = useQuery<Coach[]>({
+  queryKey: ["approvedCoaches"],
+  queryFn: async () => {
+    const res = await fetch("/api/coaches");
+    if (!res.ok) throw new Error("Failed to fetch coaches from server");
+    const data = await res.json();
 
-      // Map DB fields to frontend Coach type
-      return data.map((c: any) => ({
-        id: c.id,
-        name: c.name,
-        image: c.image || maleCoachImage,
-        rating: c.rating || 0,
-        reviewCount: c.reviewCount || 0,
-        distance: c.distance || "Unknown",
-        pricePerHour: c.price_per_hour || 50,
-        bio: c.bio || "",
-        specialties: c.specialties || [],
-        location: c.location || "",
-        responseTime: c.response_time || "Unknown",
-        availability: c.availability || "Available soon",
-        tools: c.tools || [],
-        certifications: c.certifications || [],
-        yearsExperience: c.years_experience || 0,
-        videos: c.videos || [],
-        googleReviewsUrl: c.googleReviewsUrl || "",
-        googleRating: c.googleRating || 0,
-        googleReviewCount: c.googleReviewCount || 0,
-        lastGoogleSync: c.lastGoogleSync || "",
-      }));
-    },
-  });
+    // Map DB fields to frontend Coach type using correct column names!
+    return data.map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      image: c.image || maleCoachImage,
+      rating: c.rating || 0,
+      reviewCount: c.reviewCount || 0,
+      distance: c.distance || "Unknown",
+      pricePerHour: c.price_per_hour || 50,           // <-- correct field
+      bio: c.bio || "",
+      specialties: c.specialties || [],
+      location: c.location || "",
+      responseTime: c.response_time || "Unknown",      // <-- correct field
+      availability: c.availability || "Available soon",
+      tools: c.tools || [],
+      certifications: c.certifications || [],
+      yearsExperience: c.years_experiance || 0,        // <-- correct field
+      videos: c.videos || [],
+      googleReviewsUrl: c.googleReviewsUrl || "",
+      googleRating: c.googleRating || 0,
+      googleReviewCount: c.googleReviewCount || 0,
+      lastGoogleSync: c.lastGoogleSync || "",
+    }));
+  },
+});
+
 
   if (error) console.error(error);
 
@@ -170,7 +185,7 @@ function HomePage() {
         filtered.sort((a, b) => a.pricePerHour - b.pricePerHour);
         break;
       case "price_high":
-        filtered.sort((a, b) => b.pricePerHour - a.pricePerHour);
+        filtered.sort((a, b) => b.pricePerHour - b.pricePerHour);
         break;
       case "reviews":
         filtered.sort((a, b) => b.reviewCount - a.reviewCount);
