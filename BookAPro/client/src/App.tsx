@@ -109,28 +109,28 @@ const { data: approvedCoaches = [], isLoading, error } = useQuery<Coach[]>({
     const data = await res.json();
 
     // Map DB fields to frontend Coach type using correct column names!
-    return data.map((c: any) => ({
-      id: c.id,
-      name: c.name,
-      image: c.image || maleCoachImage,
-      rating: c.rating || 0,
-      reviewCount: c.reviewCount || 0,
-      distance: c.distance || "Unknown",
-      pricePerHour: c.price_per_hour || 50,           // <-- correct field
-      bio: c.bio || "",
-      specialties: c.specialties || [],
-      location: c.location || "",
-      responseTime: c.response_time || "Unknown",      // <-- correct field
-      availability: c.availability || "Available soon",
-      tools: c.tools || [],
-      certifications: c.certifications || [],
-      yearsExperience: c.years_experiance || 0,        // <-- correct field
-      videos: c.videos || [],
-      googleReviewsUrl: c.googleReviewsUrl || "",
-      googleRating: c.googleRating || 0,
-      googleReviewCount: c.googleReviewCount || 0,
-      lastGoogleSync: c.lastGoogleSync || "",
-    }));
+return data.map((c: any) => ({
+  id: c.id,
+  name: c.name,
+  image: c.image || maleCoachImage,
+  rating: c.rating || 0,
+  reviewCount: c.reviewCount || 0,
+  distance: c.distance || "Unknown",
+  pricePerHour: c.pricePerHour ?? 50,          // <-- camelCase from backend
+  bio: c.bio || "",
+  specialties: c.specialties || [],
+  location: c.location || "",
+  responseTime: c.responseTime || "Unknown",    // <-- camelCase from backend
+  availability: c.availability || "Available soon",
+  tools: c.tools || [],
+  certifications: c.certifications || [],
+  yearsExperience: c.yearsExperience ?? 0,     // <-- camelCase from backend
+  videos: c.videos || [],
+  googleReviewsUrl: c.googleReviewsUrl || "",
+  googleRating: c.googleRating || 0,
+  googleReviewCount: c.googleReviewCount || 0,
+  lastGoogleSync: c.lastGoogleSync || "",
+}));
   },
 });
 

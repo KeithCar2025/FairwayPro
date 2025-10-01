@@ -242,16 +242,39 @@ app.post("/api/admin/approve-coach/:id", isAdmin, async (req, res) => {
   app.get("/api/admin/actions", isAdmin, async (_req, res) => res.json(await storage.getAdminActions()));
   app.get("/api/admin/dashboard", isAdmin, async (req, res) => res.json({ message: "Welcome Admin!", userId: req.user.id }));
 
-  app.get('/api/coaches', async (req, res) => {
-    try {
-      const coaches = await storage.getApprovedCoaches();
-      res.json(coaches);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Failed to fetch coaches' });
-    }
-  });
 
+function mapCoachDbToApi(coach) {
+  return {
+    id: coach.id,
+    userId: coach.user_id,
+    name: coach.name,
+    bio: coach.bio,
+    location: coach.location,
+    pricePerHour: coach.price_per_hour,
+    rating: coach.rating,
+    reviewCount: coach.review_count,
+    responseTime: coach.response_time,
+    availability: coach.availability,
+    yearsExperience: coach.years_experiance,
+    image: coach.image,
+    isVerified: coach.is_verified,
+    latitude: coach.latitude,
+    longitude: coach.longitude,
+    approvalStatus: coach.approval_status,
+    approvedAt: coach.approved_at,
+    approvedBy: coach.approved_by,
+    googleReviewsUrl: coach.google_reviews_url,
+    googleRating: coach.google_rating,
+    googleReviewCount: coach.google_review_count,
+    lastGoogleSync: coach.last_google_sync,
+    pgaCertificationId: coach.pga_certification_id,
+    specialties: coach.specialties || [],
+    tools: coach.tools || [],
+    certifications: coach.certifications || [],
+    videos: coach.videos || [],
+    // Add any other fields you need
+  };
+}
   // -----------------------------
   // COACH ROUTES
   // -----------------------------
@@ -321,7 +344,16 @@ app.get("/api/coaches/me", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch coach profile", details: error.message });
   }
 });
-
+app.get('/api/coaches', async (req, res) => {
+  try {
+    const coaches = await storage.getApprovedCoaches();
+    const apiCoaches = coaches.map(mapCoachDbToApi);
+    res.json(apiCoaches);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch coaches' });
+  }
+});
 app.put("/api/coaches/me", async (req, res) => {
   const userId = (req.session as any)?.userId;
   if (!userId) return res.status(401).json({ error: "Not authenticated" });
@@ -338,6 +370,7 @@ app.put("/api/coaches/me", async (req, res) => {
   app.get("/api/coaches/:id", async (req, res) => {
     try {
       const coach = await storage.getCoachWithDetailsByUserId(req.params.id);
+	  const apiCoaches = coaches.map(mapCoachDbToApi);
       if (!coach) return res.status(404).json({ error: "Coach not found" });
       res.json(coach);
     } catch (error) {
