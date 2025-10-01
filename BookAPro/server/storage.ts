@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
+import { mapCoachDbToApi } from './utils/coach-mappers'; 
 import { 
   type User, type InsertCoach, type Coach, type InsertStudent, type Student,
   type Booking, type InsertBooking, type Review, type InsertReview,
@@ -137,27 +138,9 @@ export class DatabaseStorage implements IStorage {
 
     if (error) throw error;
 
-    return (data || []).map((coach: any) => ({
-      id: coach.id,
-      name: coach.name,
-      email: coach.email,
-      bio: coach.bio,
-      location: coach.location,
-      pricePerHour: coach.price_per_hour,
-      yearsExperience: coach.years_experiance,
-      image: coach.image,
-      createdAt: coach.created_at,
-      approvalStatus: coach.approval_status,
-      userId: coach.user_id,
-      specialties: coach.coach_specialties?.map((s: any) => s.specialty) || [],
-      tools: coach.coach_tools?.map((t: any) => t.tool) || [],
-      certifications: coach.coach_certifications?.map((c: any) => c.certification) || [],
-      videos: coach.videos || [],
-      responseTime: coach.response_time || 'Unknown',
-      availability: coach.availability || 'Available soon',
-      reviewCount: coach.review_count || 0,
-    }));
-  }
+  return (data || []).map(mapCoachDbToApi);
+}
+  
 
   // ------------------ Users ------------------
   async getUser(id: string): Promise<User | undefined> {
