@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Form } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { X, Plus, Upload, MapPin, DollarSign, Award, Camera, Star, Calendar as CalendarIcon, Link2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -30,7 +31,12 @@ const coachEditSchema = z.object({
   pgaCertificationId: z.string().min(3, "PGA certification/ID is required").max(50, "PGA certification/ID must be less than 50 characters"),
   responseTime: z.string().min(1, "Response time is required"),
   availability: z.string().min(1, "Availability is required"),
-  googleReviewsUrl: z.string().url("Please enter a valid Google Reviews URL").optional().or(z.literal("")),
+  googleReviewsUrl: z
+    .union([
+      z.string().url("Please enter a valid Google Reviews URL"),
+      z.string().length(0)
+    ])
+    .optional(),
   image: z.string().optional().default(""),
   latitude: z.coerce.number().optional(),
   longitude: z.coerce.number().optional(),
@@ -91,9 +97,33 @@ export default function CoachEditProfile() {
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [selectedCertifications, setSelectedCertifications] = useState<string[]>([]);
   const [videos, setVideos] = useState<Array<CoachEditForm["videos"][number]>>([]);
-  const [profileImageUrl, setProfileImageUrl] = useState<string>("");
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false);
+
+  const form = useForm<CoachEditForm>({
+    resolver: zodResolver(coachEditSchema),
+    defaultValues: {
+      email: "",
+      password: "",
+      name: "",
+      bio: "",
+      location: "",
+      pricePerHour: 75,
+      yearsExperience: 5,
+      pgaCertificationId: "",
+      responseTime: "Within 24 hours",
+      availability: "Available this week",
+      googleReviewsUrl: "",
+      image: "",
+      latitude: undefined,
+      longitude: undefined,
+      googleCalendarConnected: false,
+      specialties: [],
+      tools: [],
+      certifications: [],
+      videos: [],
+    },
+  });
 
   // Load coach profile
   const { data: coachProfile, isLoading: loadingProfile } = useQuery({
@@ -120,35 +150,9 @@ export default function CoachEditProfile() {
       setSelectedTools(coachProfile.tools || []);
       setSelectedCertifications(coachProfile.certifications || []);
       setVideos(coachProfile.videos || []);
-      setProfileImageUrl(coachProfile.image || "");
       setGoogleCalendarConnected(!!coachProfile.googleCalendarConnected);
     }
-  }, [coachProfile]);
-
-  const form = useForm<CoachEditForm>({
-    resolver: zodResolver(coachEditSchema),
-    defaultValues: {
-      email: "",
-      password: "",
-      name: "",
-      bio: "",
-      location: "",
-      pricePerHour: 75,
-      yearsExperience: 5,
-      pgaCertificationId: "",
-      responseTime: "Within 24 hours",
-      availability: "Available this week",
-      googleReviewsUrl: "",
-      image: "",
-      latitude: undefined,
-      longitude: undefined,
-      googleCalendarConnected: false,
-      specialties: [],
-      tools: [],
-      certifications: [],
-      videos: [],
-    },
-  });
+  }, [coachProfile, form]);
 
   // Edit mutation
   const editCoachMutation = useMutation({
@@ -186,7 +190,6 @@ export default function CoachEditProfile() {
   // Google Calendar Connect/Disconnect
   const handleGoogleCalendarConnect = async () => {
     try {
-      // Redirect to Google OAuth (or open popup)
       window.location.href = "/api/google/calendar/connect";
     } catch (error) {
       toast({ title: "Google Calendar Error", description: "Could not connect calendar", variant: "destructive" });
@@ -206,41 +209,68 @@ export default function CoachEditProfile() {
   };
 
   // Profile image upload
-  const handleGetUploadParameters = async () => {
-    const response = await fetch('/api/objects/upload', { method: 'POST', credentials: 'include' });
-    if (!response.ok) throw new Error('Failed to get upload URL');
-    const { uploadURL } = await response.json();
-    return { method: 'PUT' as const, url: uploadURL };
-  };
+const handleGetUploadParameters = async (uppyFile) => {
+  const file = uppyFile.data;
+  const response = await fetch('/api/objects/upload', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      filename: `${Date.now()}_${file.name}`,
+      contentType: file.type,
+    }),
+  });
+  if (!response.ok) throw new Error('Failed to get upload URL');
+  const { uploadURL } = await response.json();
+  return { method: 'PUT', url: uploadURL };
+};
 
-  const handleImageUploadComplete = async (result: any) => {
+const handleImageUploadComplete = async (result: any) => {
+  console.log("handleImageUploadComplete called with", result);
+  if (!result.successful || result.successful.length === 0) {
     setIsUploadingImage(false);
-    if (result.successful && result.successful.length > 0) {
-      const uploadedFile = result.successful[0];
-      const uploadUrl = uploadedFile.uploadURL;
-      if (uploadUrl) {
-        try {
-          const response = await fetch('/api/objects/normalize-profile-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ imageURL: uploadUrl })
-          });
-          if (response.ok) {
-            const { objectPath } = await response.json();
-            setProfileImageUrl(objectPath);
-            form.setValue('image', objectPath, { shouldValidate: true });
-            toast({ title: "Profile Image Uploaded", description: "Your profile image has been uploaded successfully." });
-          } else {
-            throw new Error('Failed to process uploaded image');
-          }
-        } catch (error) {
-          toast({ title: "Upload Processing Failed", description: "There was an error processing your uploaded image.", variant: "destructive" });
-        }
-      }
-    }
-  };
+    return;
+  }
 
+  setIsUploadingImage(true);
+
+  const uploadedFile = result.successful[0];
+  const uploadUrl = uploadedFile.uploadURL;
+  console.log("uploadedFile", uploadedFile, "uploadUrl", uploadUrl);
+
+  if (uploadUrl) {
+    try {
+      const response = await fetch('/api/objects/normalize-profile-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ imageURL: uploadUrl }),
+      });
+      if (response.ok) {
+        const { objectPath } = await response.json();
+        console.log("Setting form image value to", objectPath);
+        form.setValue('image', objectPath, { shouldValidate: true });
+        setIsUploadingImage(false);
+        toast({
+          title: "Profile Image Uploaded",
+          description: "Your profile image has been uploaded successfully.",
+        });
+      } else {
+        setIsUploadingImage(false);
+        throw new Error('Failed to process uploaded image');
+      }
+    } catch (error) {
+      setIsUploadingImage(false);
+      toast({
+        title: "Upload Processing Failed",
+        description: "There was an error processing your uploaded image.",
+        variant: "destructive",
+      });
+    }
+  } else {
+    setIsUploadingImage(false);
+  }
+};
   // Video upload logic (same as registration)
   const handleVideoUpload = (videoIndex: number) => async (result: any) => {
     const updatedVideos = [...videos];
@@ -335,18 +365,39 @@ export default function CoachEditProfile() {
   };
   const removeCertification = (certification: string) => setSelectedCertifications(selectedCertifications.filter(c => c !== certification));
 
-  // Submit handler
-  const handleSubmit = async (data: CoachEditForm) => {
-    editCoachMutation.mutate({
-      ...data,
-      specialties: selectedSpecialties,
-      tools: selectedTools,
-      certifications: selectedCertifications,
-      videos,
-      image: profileImageUrl,
-      googleCalendarConnected
+  // Submit handler - always use form value for image
+const handleSubmit = async (data: CoachEditForm) => {
+console.log("Submitting form data:", data);
+  // Prevent form submission until image upload (or any upload) is finished
+  if (isUploadingImage) {
+    toast({
+      title: "Please wait for the image upload to finish.",
+      description: "Your changes will be saved once your profile image is uploaded.",
+      variant: "destructive"
     });
-  };
+    return;
+  }
+
+  // Optional: You can warn or block if image is required and not set (if you want)
+  // if (!data.image) {
+  //   toast({
+  //     title: "Profile image required",
+  //     description: "Please upload a profile image before saving.",
+  //     variant: "destructive"
+  //   });
+  //   return;
+  // }
+
+  editCoachMutation.mutate({
+    ...data,
+    specialties: selectedSpecialties,
+    tools: selectedTools,
+    certifications: selectedCertifications,
+    videos,
+    image: data.image, // This value is set only after a successful upload
+    googleCalendarConnected
+  });
+};
 
   if (loadingProfile) {
     return (
@@ -368,177 +419,201 @@ export default function CoachEditProfile() {
               Update your information, pricing, and integrations
             </p>
           </div>
-          <Form {...form} onSubmit={form.handleSubmit(handleSubmit)}>
-            <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full">
-              <TabsList className="grid w-full grid-cols-4">
-                <TabsTrigger value="profile">Profile</TabsTrigger>
-                <TabsTrigger value="expertise">Expertise</TabsTrigger>
-                <TabsTrigger value="tools">Tools & Certs</TabsTrigger>
-                <TabsTrigger value="content">Content</TabsTrigger>
-              </TabsList>
-              {/* PROFILE TAB */}
-              <TabsContent value="profile" className="mt-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Camera className="w-5 h-5" />
-                      Basic Profile
-                    </CardTitle>
-                    <CardDescription>
-                      Edit your personal info and profile photo
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <FormField
-                      control={form.control}
-                      name="email"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Email *</FormLabel>
-                          <FormControl>
-                            <Input placeholder="you@example.com" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="password"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Change Password</FormLabel>
-                          <FormControl>
-                            <Input type="password" placeholder="********" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="name"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Full Name *</FormLabel>
-                          <FormControl>
-                            <Input placeholder="John Smith" {...field} data-testid="input-name" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="bio"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Bio * (50-500 characters)</FormLabel>
-                          <FormControl>
-                            <Textarea
-                              placeholder="Tell potential students about your teaching philosophy, experience, and what makes you unique..."
-                              className="min-h-24"
-                              {...field}
-                              data-testid="textarea-bio"
-                            />
-                          </FormControl>
-                          <div className="text-sm text-muted-foreground">
-                            {field.value?.length || 0}/500 characters
-                          </div>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(handleSubmit)}>
+              <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full">
+                <TabsList className="grid w-full grid-cols-4">
+                  <TabsTrigger value="profile">Profile</TabsTrigger>
+                  <TabsTrigger value="expertise">Expertise</TabsTrigger>
+                  <TabsTrigger value="tools">Tools & Certs</TabsTrigger>
+                  <TabsTrigger value="content">Content</TabsTrigger>
+                </TabsList>
+                {/* PROFILE TAB */}
+                <TabsContent value="profile" className="mt-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Camera className="w-5 h-5" />
+                        Basic Profile
+                      </CardTitle>
+                      <CardDescription>
+                        Edit your personal info and profile photo
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
                       <FormField
                         control={form.control}
-                        name="location"
+                        name="email"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Email *</FormLabel>
+                            <FormControl>
+                              <Input placeholder="you@example.com" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="password"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Change Password</FormLabel>
+                            <FormControl>
+                              <Input type="password" placeholder="********" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Full Name *</FormLabel>
+                            <FormControl>
+                              <Input placeholder="John Smith" {...field} data-testid="input-name" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="bio"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Bio * (50-500 characters)</FormLabel>
+                            <FormControl>
+                              <Textarea
+                                placeholder="Tell potential students about your teaching philosophy, experience, and what makes you unique..."
+                                className="min-h-24"
+                                {...field}
+                                data-testid="textarea-bio"
+                              />
+                            </FormControl>
+                            <div className="text-sm text-muted-foreground">
+                              {field.value?.length || 0}/500 characters
+                            </div>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="location"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="flex items-center gap-2">
+                                <MapPin className="w-4 h-4" />
+                                Location *
+                              </FormLabel>
+                              <FormControl>
+                                <LocationAutocomplete
+                                  value={field.value}
+                                  onChange={(locObj) => {
+                                    field.onChange(locObj.location);
+                                    form.setValue("latitude", locObj.latitude, { shouldValidate: true });
+                                    form.setValue("longitude", locObj.longitude, { shouldValidate: true });
+                                  }}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="yearsExperience"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Years Experience *</FormLabel>
+                              <FormControl>
+                                <Input type="number" min="1" max="50" {...field} data-testid="input-experience" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                      <FormField
+                        control={form.control}
+                        name="pgaCertificationId"
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel className="flex items-center gap-2">
-                              <MapPin className="w-4 h-4" />
-                              Location *
+                              <Award className="w-4 h-4" />
+                              PGA Certification/ID *
                             </FormLabel>
                             <FormControl>
-                              <LocationAutocomplete
-                                value={field.value}
-                                onChange={(locObj) => {
-                                  field.onChange(locObj.location);
-                                  form.setValue("latitude", locObj.latitude, { shouldValidate: true });
-                                  form.setValue("longitude", locObj.longitude, { shouldValidate: true });
-                                }}
+                              <Input 
+                                placeholder="Enter your PGA certification number or ID" 
+                                {...field} 
+                                data-testid="input-pga-certification" 
                               />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
                         )}
                       />
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormField
+                          control={form.control}
+                          name="pricePerHour"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="flex items-center gap-2">
+                                <DollarSign className="w-4 h-4" />
+                                Price per Hour *
+                              </FormLabel>
+                              <FormControl>
+                                <Input type="number" min="25" max="500" {...field} data-testid="input-price" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="responseTime"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Response Time *</FormLabel>
+                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <FormControl>
+                                  <SelectTrigger data-testid="select-response-time">
+                                    <SelectValue placeholder="Select response time" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {RESPONSE_TIMES.map((time) => (
+                                    <SelectItem key={time} value={time}>{time}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
                       <FormField
                         control={form.control}
-                        name="yearsExperience"
+                        name="availability"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Years Experience *</FormLabel>
-                            <FormControl>
-                              <Input type="number" min="1" max="50" {...field} data-testid="input-experience" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                    <FormField
-                      control={form.control}
-                      name="pgaCertificationId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="flex items-center gap-2">
-                            <Award className="w-4 h-4" />
-                            PGA Certification/ID *
-                          </FormLabel>
-                          <FormControl>
-                            <Input 
-                              placeholder="Enter your PGA certification number or ID" 
-                              {...field} 
-                              data-testid="input-pga-certification" 
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="pricePerHour"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="flex items-center gap-2">
-                              <DollarSign className="w-4 h-4" />
-                              Price per Hour *
-                            </FormLabel>
-                            <FormControl>
-                              <Input type="number" min="25" max="500" {...field} data-testid="input-price" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="responseTime"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Response Time *</FormLabel>
+                            <FormLabel>General Availability *</FormLabel>
                             <Select onValueChange={field.onChange} defaultValue={field.value}>
                               <FormControl>
-                                <SelectTrigger data-testid="select-response-time">
-                                  <SelectValue placeholder="Select response time" />
+                                <SelectTrigger data-testid="select-availability">
+                                  <SelectValue placeholder="Select availability" />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                {RESPONSE_TIMES.map((time) => (
-                                  <SelectItem key={time} value={time}>{time}</SelectItem>
+                                {AVAILABILITY_OPTIONS.map((availability) => (
+                                  <SelectItem key={availability} value={availability}>{availability}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -546,439 +621,419 @@ export default function CoachEditProfile() {
                           </FormItem>
                         )}
                       />
-                    </div>
-                    <FormField
-                      control={form.control}
-                      name="availability"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>General Availability *</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormField
+                        control={form.control}
+                        name="googleReviewsUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="flex items-center gap-2">
+                              <Star className="w-4 h-4" />
+                              Google Reviews URL (Optional)
+                            </FormLabel>
                             <FormControl>
-                              <SelectTrigger data-testid="select-availability">
-                                <SelectValue placeholder="Select availability" />
-                              </SelectTrigger>
+                              <Input 
+                                placeholder="https://g.page/r/your-business-name/review" 
+                                {...field} 
+                                data-testid="input-google-reviews-url"
+                              />
                             </FormControl>
-                            <SelectContent>
-                              {AVAILABILITY_OPTIONS.map((availability) => (
-                                <SelectItem key={availability} value={availability}>{availability}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="googleReviewsUrl"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="flex items-center gap-2">
-                            <Star className="w-4 h-4" />
-                            Google Reviews URL (Optional)
-                          </FormLabel>
-                          <FormControl>
-                            <Input 
-                              placeholder="https://g.page/r/your-business-name/review" 
-                              {...field} 
-                              data-testid="input-google-reviews-url"
-                            />
-                          </FormControl>
-                          <div className="text-sm text-muted-foreground">
-                            Link your Google Business profile reviews to show your star rating and attract more students
-                          </div>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    {/* Profile Image Upload Section */}
-                    <div className="space-y-3">
-                      <Label className="text-base font-medium">Profile Photo</Label>
-                      <div className="flex items-center space-x-4">
-                        <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center overflow-hidden">
-                          {profileImageUrl ? (
-                            <img 
-                              src={profileImageUrl} 
-                              alt="Profile preview" 
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <Camera className="w-8 h-8 text-muted-foreground" />
-                          )}
-                        </div>
-                        <div className="flex-1">
-                          <ObjectUploader
-                            maxNumberOfFiles={1}
-                            maxFileSize={5242880} // 5MB
-                            onGetUploadParameters={handleGetUploadParameters}
-                            onComplete={handleImageUploadComplete}
-                            buttonClassName="w-full sm:w-auto"
-                          >
-                            <Upload className="w-4 h-4 mr-2" />
-                            {profileImageUrl ? 'Change Photo' : 'Upload Photo'}
-                          </ObjectUploader>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            JPG, PNG, GIF up to 5MB. Recommended: 400x400px
-                          </p>
-                          {isUploadingImage && (
-                            <p className="text-sm text-primary mt-1">Uploading...</p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    {/* Google Calendar Integration */}
-                    <div className="space-y-3 pt-4">
-                      <Label className="text-base font-medium flex items-center gap-2">
-                        <CalendarIcon className="w-5 h-5" />
-                        Google Calendar Sync
-                        {googleCalendarConnected && (
-                          <Badge variant="secondary" className="ml-2">Connected</Badge>
+                            <div className="text-sm text-muted-foreground">
+                              Link your Google Business profile reviews to show your star rating and attract more students
+                            </div>
+                            <FormMessage />
+                          </FormItem>
                         )}
-                      </Label>
-                      <div className="flex gap-2">
-                        {!googleCalendarConnected ? (
-                          <Button type="button" variant="outline" onClick={handleGoogleCalendarConnect} data-testid="button-google-calendar-connect">
-                            <Link2 className="w-4 h-4 mr-2" />
-                            Connect Google Calendar
-                          </Button>
-                        ) : (
-                          <Button type="button" variant="destructive" onClick={handleGoogleCalendarDisconnect} data-testid="button-google-calendar-disconnect">
-                            Disconnect Google Calendar
-                          </Button>
-                        )}
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        Sync your lesson bookings with Google Calendar for easy scheduling. Two-way sync supported.
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-              {/* EXPERTISE TAB */}
-              <TabsContent value="expertise" className="mt-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Award className="w-5 h-5" />
-                      Teaching Specialties
-                    </CardTitle>
-                    <CardDescription>
-                      Select the areas where you excel as a golf instructor
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      <div>
-                        <Label className="text-base font-medium">Selected Specialties</Label>
-                        <div className="flex flex-wrap gap-2 mt-2 min-h-12">
-                          {selectedSpecialties.map((specialty) => (
-                            <Badge key={specialty} variant="default" className="flex items-center gap-1">
-                              {specialty}
-                              <X 
-                                className="w-3 h-3 cursor-pointer" 
-                                onClick={() => removeSpecialty(specialty)}
+                      />
+                      {/* Profile Image Upload Section */}
+                      <div className="space-y-3">
+                        <Label className="text-base font-medium">Profile Photo</Label>
+                        <div className="flex items-center space-x-4">
+                          <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center overflow-hidden">
+                            {form.watch("image") ? (
+                              <img 
+                                src={form.watch("image")} 
+                                alt="Profile preview" 
+                                className="w-full h-full object-cover"
                               />
-                            </Badge>
-                          ))}
-                          {selectedSpecialties.length === 0 && (
-                            <p className="text-sm text-muted-foreground flex items-center">
-                              No specialties selected yet
+                            ) : (
+                              <Camera className="w-8 h-8 text-muted-foreground" />
+                            )}
+                          </div>
+                          <div className="flex-1">
+<ObjectUploader
+  maxNumberOfFiles={1}
+  maxFileSize={5242880}
+  onGetUploadParameters={handleGetUploadParameters}
+  onComplete={handleImageUploadComplete}
+>
+  <button type="button" className="w-full sm:w-auto">
+    <Upload className="w-4 h-4 mr-2" />
+    {form.watch("image") ? 'Change Photo' : 'Upload Photo'}
+  </button>
+</ObjectUploader>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              JPG, PNG, GIF up to 5MB. Recommended: 400x400px
                             </p>
+                            {isUploadingImage && (
+                              <p className="text-sm text-primary mt-1">Uploading...</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      {/* Google Calendar Integration */}
+                      <div className="space-y-3 pt-4">
+                        <Label className="text-base font-medium flex items-center gap-2">
+                          <CalendarIcon className="w-5 h-5" />
+                          Google Calendar Sync
+                          {googleCalendarConnected && (
+                            <Badge variant="secondary" className="ml-2">Connected</Badge>
+                          )}
+                        </Label>
+                        <div className="flex gap-2">
+                          {!googleCalendarConnected ? (
+                            <Button type="button" variant="outline" onClick={handleGoogleCalendarConnect} data-testid="button-google-calendar-connect">
+                              <Link2 className="w-4 h-4 mr-2" />
+                              Connect Google Calendar
+                            </Button>
+                          ) : (
+                            <Button type="button" variant="destructive" onClick={handleGoogleCalendarDisconnect} data-testid="button-google-calendar-disconnect">
+                              Disconnect Google Calendar
+                            </Button>
                           )}
                         </div>
-                      </div>
-                      <div>
-                        <Label className="text-sm font-medium">Available Specialties</Label>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-2">
-                          {GOLF_SPECIALTIES.filter(specialty => !selectedSpecialties.includes(specialty))
-                            .map((specialty) => (
-                            <Button
-                              key={specialty}
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => addSpecialty(specialty)}
-                              className="justify-start text-left"
-                              data-testid={`button-add-specialty-${specialty.replace(/\s+/g, '-').toLowerCase()}`}
-                            >
-                              <Plus className="w-3 h-3 mr-1" />
-                              {specialty}
-                            </Button>
-                          ))}
+                        <div className="text-sm text-muted-foreground">
+                          Sync your lesson bookings with Google Calendar for easy scheduling. Two-way sync supported.
                         </div>
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-              {/* TOOLS & CERTS TAB */}
-              <TabsContent value="tools" className="mt-6">
-                <div className="space-y-6">
-                  {/* Tools Section */}
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+                {/* EXPERTISE TAB */}
+                <TabsContent value="expertise" className="mt-6">
                   <Card>
                     <CardHeader>
-                      <CardTitle>Teaching Tools & Equipment</CardTitle>
+                      <CardTitle className="flex items-center gap-2">
+                        <Award className="w-5 h-5" />
+                        Teaching Specialties
+                      </CardTitle>
                       <CardDescription>
-                        What technology and equipment do you use in your lessons?
+                        Select the areas where you excel as a golf instructor
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-4">
                         <div>
-                          <Label className="text-base font-medium">Selected Tools</Label>
+                          <Label className="text-base font-medium">Selected Specialties</Label>
                           <div className="flex flex-wrap gap-2 mt-2 min-h-12">
-                            {selectedTools.map((tool) => (
-                              <Badge key={tool} variant="secondary" className="flex items-center gap-1">
-                                {tool}
+                            {selectedSpecialties.map((specialty) => (
+                              <Badge key={specialty} variant="default" className="flex items-center gap-1">
+                                {specialty}
                                 <X 
                                   className="w-3 h-3 cursor-pointer" 
-                                  onClick={() => removeTool(tool)}
+                                  onClick={() => removeSpecialty(specialty)}
                                 />
                               </Badge>
                             ))}
-                            {selectedTools.length === 0 && (
+                            {selectedSpecialties.length === 0 && (
                               <p className="text-sm text-muted-foreground flex items-center">
-                                No tools selected yet
+                                No specialties selected yet
                               </p>
                             )}
                           </div>
                         </div>
                         <div>
-                          <Label className="text-sm font-medium">Available Tools</Label>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
-                            {GOLF_TOOLS.filter(tool => !selectedTools.includes(tool))
-                              .map((tool) => (
-                              <Button
-                                key={tool}
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => addTool(tool)}
-                                className="justify-start text-left"
-                                data-testid={`button-add-tool-${tool.replace(/\s+/g, '-').toLowerCase()}`}
-                              >
-                                <Plus className="w-3 h-3 mr-1" />
-                                {tool}
-                              </Button>
+                          <Label className="text-sm font-medium">Available Specialties</Label>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-2">
+                            {GOLF_SPECIALTIES.filter(specialty => !selectedSpecialties.includes(specialty))
+                              .map((specialty) => (
+                                <Button
+                                  key={specialty}
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => addSpecialty(specialty)}
+                                  className="justify-start text-left"
+                                  data-testid={`button-add-specialty-${specialty.replace(/\s+/g, '-').toLowerCase()}`}
+                                >
+                                  <Plus className="w-3 h-3 mr-1" />
+                                  {specialty}
+                                </Button>
                             ))}
                           </div>
                         </div>
                       </div>
                     </CardContent>
                   </Card>
-                  {/* Certifications Section */}
+                </TabsContent>
+                {/* TOOLS & CERTS TAB */}
+                <TabsContent value="tools" className="mt-6">
+                  <div className="space-y-6">
+                    {/* Tools Section */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Teaching Tools & Equipment</CardTitle>
+                        <CardDescription>
+                          What technology and equipment do you use in your lessons?
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-4">
+                          <div>
+                            <Label className="text-base font-medium">Selected Tools</Label>
+                            <div className="flex flex-wrap gap-2 mt-2 min-h-12">
+                              {selectedTools.map((tool) => (
+                                <Badge key={tool} variant="secondary" className="flex items-center gap-1">
+                                  {tool}
+                                  <X 
+                                    className="w-3 h-3 cursor-pointer" 
+                                    onClick={() => removeTool(tool)}
+                                  />
+                                </Badge>
+                              ))}
+                              {selectedTools.length === 0 && (
+                                <p className="text-sm text-muted-foreground flex items-center">
+                                  No tools selected yet
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium">Available Tools</Label>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+                              {GOLF_TOOLS.filter(tool => !selectedTools.includes(tool))
+                                .map((tool) => (
+                                  <Button
+                                    key={tool}
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => addTool(tool)}
+                                    className="justify-start text-left"
+                                    data-testid={`button-add-tool-${tool.replace(/\s+/g, '-').toLowerCase()}`}
+                                  >
+                                    <Plus className="w-3 h-3 mr-1" />
+                                    {tool}
+                                  </Button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    {/* Certifications Section */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Professional Certifications</CardTitle>
+                        <CardDescription>
+                          List your golf teaching certifications and qualifications
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-4">
+                          <div>
+                            <Label className="text-base font-medium">Selected Certifications</Label>
+                            <div className="flex flex-wrap gap-2 mt-2 min-h-12">
+                              {selectedCertifications.map((certification) => (
+                                <Badge key={certification} variant="default" className="flex items-center gap-1">
+                                  {certification}
+                                  <X 
+                                    className="w-3 h-3 cursor-pointer" 
+                                    onClick={() => removeCertification(certification)}
+                                  />
+                                </Badge>
+                              ))}
+                              {selectedCertifications.length === 0 && (
+                                <p className="text-sm text-muted-foreground flex items-center">
+                                  No certifications selected yet
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium">Available Certifications</Label>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+                              {CERTIFICATIONS.filter(cert => !selectedCertifications.includes(cert))
+                                .map((certification) => (
+                                  <Button
+                                    key={certification}
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => addCertification(certification)}
+                                    className="justify-start text-left"
+                                    data-testid={`button-add-certification-${certification.replace(/\s+/g, '-').toLowerCase()}`}
+                                  >
+                                    <Plus className="w-3 h-3 mr-1" />
+                                    {certification}
+                                  </Button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </TabsContent>
+                {/* CONTENT TAB */}
+                <TabsContent value="content" className="mt-6">
                   <Card>
                     <CardHeader>
-                      <CardTitle>Professional Certifications</CardTitle>
+                      <CardTitle className="flex items-center gap-2">
+                        <Upload className="w-5 h-5" />
+                        Instructional Videos
+                      </CardTitle>
                       <CardDescription>
-                        List your golf teaching certifications and qualifications
+                        Upload videos showcasing your teaching methods (optional)
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-4">
-                        <div>
-                          <Label className="text-base font-medium">Selected Certifications</Label>
-                          <div className="flex flex-wrap gap-2 mt-2 min-h-12">
-                            {selectedCertifications.map((certification) => (
-                              <Badge key={certification} variant="default" className="flex items-center gap-1">
-                                {certification}
-                                <X 
-                                  className="w-3 h-3 cursor-pointer" 
-                                  onClick={() => removeCertification(certification)}
+                        {videos.map((video, index) => (
+                          <Card key={index}>
+                            <CardContent className="pt-4">
+                              <div className="flex items-center justify-between mb-4">
+                                <h4 className="font-medium">Video {index + 1}</h4>
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => removeVideo(index)}
+                                  data-testid={`button-remove-video-${index}`}
+                                >
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                  <Label htmlFor={`video-title-${index}`}>Title</Label>
+                                  <Input
+                                    id={`video-title-${index}`}
+                                    value={video.title}
+                                    onChange={(e) => updateVideo(index, 'title', e.target.value)}
+                                    placeholder="e.g., Basic Swing Fundamentals"
+                                    data-testid={`input-video-title-${index}`}
+                                  />
+                                </div>
+                                <div>
+                                  <Label htmlFor={`video-duration-${index}`}>Duration</Label>
+                                  <Input
+                                    id={`video-duration-${index}`}
+                                    value={video.duration}
+                                    onChange={(e) => updateVideo(index, 'duration', e.target.value)}
+                                    placeholder="e.g., 3:45"
+                                    data-testid={`input-video-duration-${index}`}
+                                  />
+                                </div>
+                              </div>
+                              <div className="mt-4">
+                                <Label htmlFor={`video-description-${index}`}>Description</Label>
+                                <Textarea
+                                  id={`video-description-${index}`}
+                                  value={video.description}
+                                  onChange={(e) => updateVideo(index, 'description', e.target.value)}
+                                  placeholder="Describe what students will learn from this video..."
+                                  data-testid={`textarea-video-description-${index}`}
                                 />
-                              </Badge>
-                            ))}
-                            {selectedCertifications.length === 0 && (
-                              <p className="text-sm text-muted-foreground flex items-center">
-                                No certifications selected yet
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                        <div>
-                          <Label className="text-sm font-medium">Available Certifications</Label>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
-                            {CERTIFICATIONS.filter(cert => !selectedCertifications.includes(cert))
-                              .map((certification) => (
-                              <Button
-                                key={certification}
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => addCertification(certification)}
-                                className="justify-start text-left"
-                                data-testid={`button-add-certification-${certification.replace(/\s+/g, '-').toLowerCase()}`}
-                              >
-                                <Plus className="w-3 h-3 mr-1" />
-                                {certification}
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
+                              </div>
+                              {/* Video File Upload */}
+                              <div className="mt-4">
+                                <Label className="text-base font-medium">Video File</Label>
+                                <div className="flex items-center space-x-4 mt-2">
+                                  <div className="flex-1">
+                                    <ObjectUploader
+                                      maxNumberOfFiles={1}
+                                      maxFileSize={104857600} // 100MB for video files
+                                      onGetUploadParameters={handleGetUploadParameters}
+                                      onComplete={handleVideoUpload(index)}
+                                      buttonClassName="w-full"
+                                    >
+                                      <Upload className="w-4 h-4 mr-2" />
+                                      {video.videoUrl ? 'Change Video' : 'Upload Video'}
+                                    </ObjectUploader>
+                                    {video.isUploadingVideo && (
+                                      <p className="text-sm text-primary mt-1">Uploading video...</p>
+                                    )}
+                                    {video.videoUrl && (
+                                      <p className="text-sm text-green-600 mt-1">Video uploaded successfully</p>
+                                    )}
+                                  </div>
+                                </div>
+                                <p className="text-sm text-muted-foreground mt-1">
+                                  MP4, MOV, AVI up to 100MB. Recommended: 1080p or less for optimal streaming.
+                                </p>
+                              </div>
+                              {/* Thumbnail Upload */}
+                              <div className="mt-4">
+                                <Label className="text-base font-medium">Thumbnail (Optional)</Label>
+                                <div className="flex items-center space-x-4 mt-2">
+                                  <div className="w-16 h-12 bg-muted flex items-center justify-center overflow-hidden rounded">
+                                    {video.thumbnail ? (
+                                      <img 
+                                        src={video.thumbnail} 
+                                        alt="Video thumbnail" 
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <Camera className="w-6 h-6 text-muted-foreground" />
+                                    )}
+                                  </div>
+                                  <div className="flex-1">
+                                    <ObjectUploader
+                                      maxNumberOfFiles={1}
+                                      maxFileSize={5242880} // 5MB for thumbnails
+                                      onGetUploadParameters={handleGetUploadParameters}
+                                      onComplete={handleThumbnailUpload(index)}
+                                      buttonClassName="w-full"
+                                    >
+                                      <Camera className="w-4 h-4 mr-2" />
+                                      {video.thumbnail ? 'Change Thumbnail' : 'Upload Thumbnail'}
+                                    </ObjectUploader>
+                                    {video.isUploadingThumbnail && (
+                                      <p className="text-sm text-primary mt-1">Uploading thumbnail...</p>
+                                    )}
+                                  </div>
+                                </div>
+                                <p className="text-sm text-muted-foreground mt-1">
+                                  JPG, PNG up to 5MB. Recommended: 16:9 aspect ratio (e.g., 1280x720px)
+                                </p>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={addVideo}
+                          className="w-full"
+                          data-testid="button-add-video"
+                        >
+                          <Plus className="w-4 h-4 mr-2" />
+                          Add Video
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>
-                </div>
-              </TabsContent>
-              {/* CONTENT TAB */}
-              <TabsContent value="content" className="mt-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Upload className="w-5 h-5" />
-                      Instructional Videos
-                    </CardTitle>
-                    <CardDescription>
-                      Upload videos showcasing your teaching methods (optional)
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      {videos.map((video, index) => (
-                        <Card key={index}>
-                          <CardContent className="pt-4">
-                            <div className="flex items-center justify-between mb-4">
-                              <h4 className="font-medium">Video {index + 1}</h4>
-                              <Button
-                                type="button"
-                                variant="destructive"
-                                size="sm"
-                                onClick={() => removeVideo(index)}
-                                data-testid={`button-remove-video-${index}`}
-                              >
-                                <X className="w-4 h-4" />
-                              </Button>
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              <div>
-                                <Label htmlFor={`video-title-${index}`}>Title</Label>
-                                <Input
-                                  id={`video-title-${index}`}
-                                  value={video.title}
-                                  onChange={(e) => updateVideo(index, 'title', e.target.value)}
-                                  placeholder="e.g., Basic Swing Fundamentals"
-                                  data-testid={`input-video-title-${index}`}
-                                />
-                              </div>
-                              <div>
-                                <Label htmlFor={`video-duration-${index}`}>Duration</Label>
-                                <Input
-                                  id={`video-duration-${index}`}
-                                  value={video.duration}
-                                  onChange={(e) => updateVideo(index, 'duration', e.target.value)}
-                                  placeholder="e.g., 3:45"
-                                  data-testid={`input-video-duration-${index}`}
-                                />
-                              </div>
-                            </div>
-                            <div className="mt-4">
-                              <Label htmlFor={`video-description-${index}`}>Description</Label>
-                              <Textarea
-                                id={`video-description-${index}`}
-                                value={video.description}
-                                onChange={(e) => updateVideo(index, 'description', e.target.value)}
-                                placeholder="Describe what students will learn from this video..."
-                                data-testid={`textarea-video-description-${index}`}
-                              />
-                            </div>
-                            {/* Video File Upload */}
-                            <div className="mt-4">
-                              <Label className="text-base font-medium">Video File</Label>
-                              <div className="flex items-center space-x-4 mt-2">
-                                <div className="flex-1">
-                                  <ObjectUploader
-                                    maxNumberOfFiles={1}
-                                    maxFileSize={104857600} // 100MB for video files
-                                    onGetUploadParameters={handleGetUploadParameters}
-                                    onComplete={handleVideoUpload(index)}
-                                    buttonClassName="w-full"
-                                  >
-                                    <Upload className="w-4 h-4 mr-2" />
-                                    {video.videoUrl ? 'Change Video' : 'Upload Video'}
-                                  </ObjectUploader>
-                                  {video.isUploadingVideo && (
-                                    <p className="text-sm text-primary mt-1">Uploading video...</p>
-                                  )}
-                                  {video.videoUrl && (
-                                    <p className="text-sm text-green-600 mt-1">Video uploaded successfully</p>
-                                  )}
-                                </div>
-                              </div>
-                              <p className="text-sm text-muted-foreground mt-1">
-                                MP4, MOV, AVI up to 100MB. Recommended: 1080p or less for optimal streaming.
-                              </p>
-                            </div>
-                            {/* Thumbnail Upload */}
-                            <div className="mt-4">
-                              <Label className="text-base font-medium">Thumbnail (Optional)</Label>
-                              <div className="flex items-center space-x-4 mt-2">
-                                <div className="w-16 h-12 bg-muted flex items-center justify-center overflow-hidden rounded">
-                                  {video.thumbnail ? (
-                                    <img 
-                                      src={video.thumbnail} 
-                                      alt="Video thumbnail" 
-                                      className="w-full h-full object-cover"
-                                    />
-                                  ) : (
-                                    <Camera className="w-6 h-6 text-muted-foreground" />
-                                  )}
-                                </div>
-                                <div className="flex-1">
-                                  <ObjectUploader
-                                    maxNumberOfFiles={1}
-                                    maxFileSize={5242880} // 5MB for thumbnails
-                                    onGetUploadParameters={handleGetUploadParameters}
-                                    onComplete={handleThumbnailUpload(index)}
-                                    buttonClassName="w-full"
-                                  >
-                                    <Camera className="w-4 h-4 mr-2" />
-                                    {video.thumbnail ? 'Change Thumbnail' : 'Upload Thumbnail'}
-                                  </ObjectUploader>
-                                  {video.isUploadingThumbnail && (
-                                    <p className="text-sm text-primary mt-1">Uploading thumbnail...</p>
-                                  )}
-                                </div>
-                              </div>
-                              <p className="text-sm text-muted-foreground mt-1">
-                                JPG, PNG up to 5MB. Recommended: 16:9 aspect ratio (e.g., 1280x720px)
-                              </p>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={addVideo}
-                        className="w-full"
-                        data-testid="button-add-video"
-                      >
-                        <Plus className="w-4 h-4 mr-2" />
-                        Add Video
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </Tabs>
-            <div className="flex justify-between mt-8">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setLocation('/profile')}
-                data-testid="button-cancel"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                variant="default"
-                data-testid="button-save-edit"
-              >
-                Save Changes
-              </Button>
-            </div>
+                </TabsContent>
+              </Tabs>
+              <div className="flex justify-between mt-8">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setLocation('/profile')}
+                  data-testid="button-cancel"
+                >
+                  Cancel
+                </Button>
+<Button
+  type="submit"
+  variant="default"
+  data-testid="button-save-edit"
+  disabled={isUploadingImage || editCoachMutation.isLoading}
+>
+  {isUploadingImage ? "Uploading..." : "Save Changes"}
+</Button>
+              </div>
+            </form>
           </Form>
         </div>
       </div>

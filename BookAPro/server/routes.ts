@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { pool } from './db';
+import { supabase } from "./supabaseClient";
 import { createServer, type Server } from "http";
 import session from "express-session";
 import ConnectPgSimple from "connect-pg-simple";
@@ -14,6 +15,7 @@ import express from "express";
 import fs from "fs";
 import CoachEditProfile from "@/components/CoachEditProfile";
 import cors from "cors";
+
 import {
   insertUserSchema,
   insertCoachSchema,
@@ -318,6 +320,20 @@ app.get("/api/coaches/me", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch coach profile", details: error.message });
   }
 });
+
+app.put("/api/coaches/me", async (req, res) => {
+  const userId = (req.session as any)?.userId;
+  if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+  try {
+    console.log("PUT /api/coaches/me body:", req.body); // <--- LOG THIS
+    await storage.updateCoachProfileFull(userId, req.body);
+    res.json({ message: "Profile updated" });
+  } catch (error) {
+    console.error("Update coach profile error:", error);
+    res.status(400).json({ error: "Failed to update coach profile", details: (error as any).message });
+  }
+});
   app.get("/api/coaches/:id", async (req, res) => {
     try {
       const coach = await storage.getCoachWithDetailsByUserId(req.params.id);
@@ -536,15 +552,28 @@ app.get("/api/coaches/me", async (req, res) => {
     }
   });
 
-  app.post("/api/objects/upload", isAuthenticated, async (req, res) => {
-    try {
-      const url = await new ObjectStorageService().getObjectEntityUploadURL();
-      res.json({ uploadURL: url });
-    } catch (error) {
-      console.error("Error getting upload URL:", error);
-      res.status(500).json({ error: "Failed to get upload URL" });
+app.post("/api/objects/upload", isAuthenticated, async (req, res) => {
+  try {
+    const { filename, contentType } = req.body;
+    if (!filename || !contentType) {
+      return res.status(400).json({ error: "filename and contentType required" });
     }
-  });
+
+    const { data, error } = await supabase.storage
+      .from("profile-images")
+      .createSignedUploadUrl(filename, { contentType });
+
+    if (error) throw error;
+
+    res.json({
+      uploadURL: data.signedUrl,
+      path: data.path,
+    });
+  } catch (err: any) {
+    console.error("Error getting Supabase upload URL:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
   // -----------------------------
   // MESSAGING ROUTES

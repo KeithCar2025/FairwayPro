@@ -38,7 +38,7 @@ export interface IStorage {
   getReviewsByCoach(coachId: string): Promise<Review[]>;
 
   logAdminAction(adminId: string, action: string, targetType: string, targetId?: string, details?: string): Promise<void>;
-  getAdminActions(): Promise<any[]>; // <-- Added here
+  getAdminActions(): Promise<any[]>;
 
   sendMessage(message: InsertMessage): Promise<Message>;
   getMessagesWithUser(userId1: string, userId2: string): Promise<Message[]>;
@@ -47,47 +47,118 @@ export interface IStorage {
   createCoachTool(coachId: string, tool: string): Promise<void>;
   createCoachCertification(coachId: string, certification: string): Promise<void>;
   createCoachVideo(coachId: string, video: any): Promise<void>;
-    approveCoach(coachId: string, adminId: string): Promise<Coach>;
+  approveCoach(coachId: string, adminId: string): Promise<Coach>;
   rejectCoach(coachId: string, adminId: string): Promise<Coach>;
   getApprovedCoaches(): Promise<Coach[]>;
 }
 
+function mapCoachUpdatesToDb(updates: any) {
+  console.log("mapCoachUpdatesToDb input:", updates);
+  const dbUpdates = {
+    ...(updates.name !== undefined && { name: updates.name }),
+    ...(updates.bio !== undefined && { bio: updates.bio }),
+    ...(updates.location !== undefined && { location: updates.location }),
+    ...(updates.pricePerHour !== undefined && { price_per_hour: updates.pricePerHour }),
+    ...(updates.yearsExperience !== undefined && { years_experiance: updates.yearsExperience }),
+    ...(updates.pgaCertificationId !== undefined && { pga_certification_id: updates.pgaCertificationId }),
+    ...(updates.responseTime !== undefined && { response_time: updates.responseTime }),
+    ...(updates.availability !== undefined && { availability: updates.availability }),
+    ...(updates.googleReviewsUrl !== undefined && { google_reviews_url: updates.googleReviewsUrl }),
+    ...(updates.image !== undefined && { image: updates.image }),
+    ...(updates.latitude !== undefined && { latitude: updates.latitude }),
+    ...(updates.longitude !== undefined && { longitude: updates.longitude }),
+    ...(updates.isVerified !== undefined && { is_verified: updates.isVerified }),
+    // Add more mappings as needed
+  };
+  console.log("mapCoachUpdatesToDb output (dbUpdates):", dbUpdates);
+  return dbUpdates;
+}
 export class DatabaseStorage implements IStorage {
 
-async getApprovedCoaches(): Promise<Coach[]> {
-  const { data, error } = await supabase
-    .from('coaches')
-    .select(`
-      *,
-      coach_specialties (specialty),
-      coach_tools (tool),
-      coach_certifications (certification)
-    `)
-    .eq('approval_status', 'approved');
+  // --------- PROFILE UPDATE: FULL ---------
+  async updateCoachProfileFull(userId: string, updates: any) {
+    // 1. Get coachId
+    const coach = await this.getCoachByUserId(userId);
+    if (!coach) throw new Error("Coach not found");
+    const coachId = coach.id;
 
-  if (error) throw error;
+    // 2. Update scalars in main coach row
+    const dbUpdates = mapCoachUpdatesToDb(updates);
+    if (Object.keys(dbUpdates).length > 0) {
+      const { error: coachUpdateError } = await supabase
+        .from('coaches')
+        .update(dbUpdates)
+        .eq('user_id', userId);
+      if (coachUpdateError) throw coachUpdateError;
+    }
 
-  return (data || []).map((coach: any) => ({
-    id: coach.id,
-    name: coach.name,
-    email: coach.email,
-    bio: coach.bio,
-    location: coach.location,
-    pricePerHour: coach.price_per_hour,             // <-- correct spelling
-    yearsExperience: coach.years_experiance,        // <-- correct spelling
-    image: coach.image,
-    createdAt: coach.created_at,
-    approvalStatus: coach.approval_status,
-    userId: coach.user_id,
-    specialties: coach.coach_specialties?.map((s: any) => s.specialty) || [],
-    tools: coach.coach_tools?.map((t: any) => t.tool) || [],
-    certifications: coach.coach_certifications?.map((c: any) => c.certification) || [],
-    videos: coach.videos || [],
-    responseTime: coach.response_time || 'Unknown', // <-- correct spelling
-    availability: coach.availability || 'Available soon',
-    reviewCount: coach.review_count || 0,
-  }));
-}
+    // 3. Replace join-table data for arrays
+    // --- Specialties ---
+    if (Array.isArray(updates.specialties)) {
+      await supabase.from('coach_specialties').delete().eq('coach_id', coachId);
+      for (const specialty of updates.specialties) {
+        await this.createCoachSpecialty(coachId, specialty);
+      }
+    }
+    // --- Tools ---
+    if (Array.isArray(updates.tools)) {
+      await supabase.from('coach_tools').delete().eq('coach_id', coachId);
+      for (const tool of updates.tools) {
+        await this.createCoachTool(coachId, tool);
+      }
+    }
+    // --- Certifications ---
+    if (Array.isArray(updates.certifications)) {
+      await supabase.from('coach_certifications').delete().eq('coach_id', coachId);
+      for (const cert of updates.certifications) {
+        await this.createCoachCertification(coachId, cert);
+      }
+    }
+    // --- Videos ---
+    if (Array.isArray(updates.videos)) {
+      await supabase.from('coach_videos').delete().eq('coach_id', coachId);
+      for (const video of updates.videos) {
+        await this.createCoachVideo(coachId, video);
+      }
+    }
+    // You may want to return the updated coach profile here if desired
+  }
+
+  async getApprovedCoaches(): Promise<Coach[]> {
+    const { data, error } = await supabase
+      .from('coaches')
+      .select(`
+        *,
+        coach_specialties (specialty),
+        coach_tools (tool),
+        coach_certifications (certification)
+      `)
+      .eq('approval_status', 'approved');
+
+    if (error) throw error;
+
+    return (data || []).map((coach: any) => ({
+      id: coach.id,
+      name: coach.name,
+      email: coach.email,
+      bio: coach.bio,
+      location: coach.location,
+      pricePerHour: coach.price_per_hour,
+      yearsExperience: coach.years_experiance,
+      image: coach.image,
+      createdAt: coach.created_at,
+      approvalStatus: coach.approval_status,
+      userId: coach.user_id,
+      specialties: coach.coach_specialties?.map((s: any) => s.specialty) || [],
+      tools: coach.coach_tools?.map((t: any) => t.tool) || [],
+      certifications: coach.coach_certifications?.map((c: any) => c.certification) || [],
+      videos: coach.videos || [],
+      responseTime: coach.response_time || 'Unknown',
+      availability: coach.availability || 'Available soon',
+      reviewCount: coach.review_count || 0,
+    }));
+  }
+
   // ------------------ Users ------------------
   async getUser(id: string): Promise<User | undefined> {
     const { data, error } = await supabase
@@ -145,74 +216,77 @@ async getApprovedCoaches(): Promise<Coach[]> {
     }
     return data?.role === 'admin';
   }
-// ------------------ Admin Lists ------------------
-async getAllStudents(): Promise<Student[]> {
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('role', 'student')
-    .order('created_at', { ascending: false });
 
-  if (error) throw error;
-  return data as Student[];
-}
+  // ------------------ Admin Lists ------------------
+  async getAllStudents(): Promise<Student[]> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('role', 'student')
+      .order('created_at', { ascending: false });
 
-async getAllCoaches(): Promise<Coach[]> {
-  const { data, error } = await supabase
-    .from('coaches')
-    .select('*')
-    .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data as Student[];
+  }
 
-  if (error) throw error;
-  return data as Coach[];
-}
+  async getAllCoaches(): Promise<Coach[]> {
+    const { data, error } = await supabase
+      .from('coaches')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-async getAllBookings(): Promise<Booking[]> {
-  const { data, error } = await supabase
-    .from('bookings')
-    .select('*')
-    .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data as Coach[];
+  }
 
-  if (error) throw error;
-  return data as Booking[];
-}
-async approveCoach(coachId: string, adminId: string): Promise<Coach> {
-  const { data, error } = await supabase
-    .from('coaches')
-    .update({
-      approval_status: 'approved',
-      approved_at: new Date().toISOString(),
-      approved_by: adminId
-    })
-    .eq('id', coachId)
-    .select()
-    .single();
+  async getAllBookings(): Promise<Booking[]> {
+    const { data, error } = await supabase
+      .from('bookings')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-  if (error) throw error;
+    if (error) throw error;
+    return data as Booking[];
+  }
 
-  await this.logAdminAction(adminId, 'approve_coach', 'coach', coachId);
+  async approveCoach(coachId: string, adminId: string): Promise<Coach> {
+    const { data, error } = await supabase
+      .from('coaches')
+      .update({
+        approval_status: 'approved',
+        approved_at: new Date().toISOString(),
+        approved_by: adminId
+      })
+      .eq('id', coachId)
+      .select()
+      .single();
 
-  return data as Coach;
-}
+    if (error) throw error;
 
-async rejectCoach(coachId: string, adminId: string): Promise<Coach> {
-  const { data, error } = await supabase
-    .from('coaches')
-    .update({
-      approval_status: 'rejected',
-      approved_at: new Date().toISOString(),
-      approved_by: adminId
-    })
-    .eq('id', coachId)
-    .select()
-    .single();
+    await this.logAdminAction(adminId, 'approve_coach', 'coach', coachId);
 
-  if (error) throw error;
+    return data as Coach;
+  }
 
-  await this.logAdminAction(adminId, 'reject_coach', 'coach', coachId);
+  async rejectCoach(coachId: string, adminId: string): Promise<Coach> {
+    const { data, error } = await supabase
+      .from('coaches')
+      .update({
+        approval_status: 'rejected',
+        approved_at: new Date().toISOString(),
+        approved_by: adminId
+      })
+      .eq('id', coachId)
+      .select()
+      .single();
 
-  return data as Coach;
-}
+    if (error) throw error;
+
+    await this.logAdminAction(adminId, 'reject_coach', 'coach', coachId);
+
+    return data as Coach;
+  }
+
   // ------------------ Coaches ------------------
   async getCoach(id: string): Promise<Coach | undefined> {
     const { data, error } = await supabase
@@ -252,37 +326,72 @@ async rejectCoach(coachId: string, adminId: string): Promise<Coach> {
     if (error) throw error;
     await this.logAdminAction(adminId, 'delete_coach', 'coach', coachId);
   }
-async getCoachByUserId(userId: string) {
-  const { data, error } = await supabase
-    .from('coaches')
-    .select('*')
-    .eq('user_id', userId)
-    .single();
-  if (error) throw error;
-  return data;
-}
 
-async getCoachWithDetailsByUserId(userId: string) {
-  console.log("DEBUG getCoachWithDetailsByUserId called with userId:", userId);
+  async getCoachByUserId(userId: string) {
+    const { data, error } = await supabase
+      .from('coaches')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+    if (error) throw error;
+    return data;
+  }
 
-  const { data, error } = await supabase
-    .from('coaches')
-    .select(`
-      *,
-      coach_specialties (specialty),
-      coach_tools (tool),
-      coach_certifications (certification),
-      coach_videos (*)
-    `)
-    .eq('user_id', userId)
-    .single();
+  async getCoachWithDetailsByUserId(userId: string) {
+    const { data: coach, error } = await supabase
+      .from('coaches')
+      .select(`
+        *,
+        coach_specialties (specialty),
+        coach_tools (tool),
+        coach_certifications (certification),
+        coach_videos (*)
+      `)
+      .eq('user_id', userId)
+      .single();
 
-  console.log("DEBUG getCoachWithDetailsByUserId query result:", { data, error });
+    if (error?.code === 'PGRST116') return null;
+    if (error) throw error;
+    if (!coach) return null;
 
-  if (error?.code === 'PGRST116') return null;
-  if (error) throw error;
-  return data;
-}
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('email')
+      .eq('id', userId)
+      .single();
+    if (userError) throw userError;
+
+    return {
+      id: coach.id,
+      userId: coach.user_id,
+      email: user?.email || "",
+      name: coach.name,
+      bio: coach.bio,
+      location: coach.location,
+      pricePerHour: coach.price_per_hour,
+      yearsExperience: coach.years_experiance,
+      pgaCertificationId: coach.pga_certification_id,
+      image: coach.image,
+      isVerified: coach.is_verified,
+      latitude: coach.latitude,
+      longitude: coach.longitude,
+      approvalStatus: coach.approval_status,
+      approvedAt: coach.approved_at,
+      approvedBy: coach.approved_by,
+      googleReviewsUrl: coach.google_reviews_url,
+      googleRating: coach.google_rating,
+      googleReviewCount: coach.google_review_count,
+      lastGoogleSync: coach.last_google_sync,
+      specialties: coach.coach_specialties?.map((s: any) => s.specialty) || [],
+      tools: coach.coach_tools?.map((t: any) => t.tool) || [],
+      certifications: coach.coach_certifications?.map((c: any) => c.certification) || [],
+      videos: coach.coach_videos || [],
+      responseTime: coach.response_time,
+      availability: coach.availability,
+      reviewCount: coach.review_count,
+      createdAt: coach.created_at,
+    };
+  }
 
   // ------------------ Students ------------------
   async getStudent(id: string): Promise<Student | undefined> {
@@ -391,26 +500,27 @@ async getCoachWithDetailsByUserId(userId: string) {
     if (error) throw error;
     return data || [];
   }
-async getPendingCoaches(): Promise<any[]> {
-  const { data, error } = await supabase
-    .from('coaches')
-    .select('*')
-    .eq('approval_status', 'pending');
-  if (error) throw error;
-  return (data || []).map(coach => ({
-    id: coach.id,
-    name: coach.name,
-    email: coach.email,
-    bio: coach.bio,
-    location: coach.location,
-    pricePerHour: coach.price_per_hour,
-    yearsExperience: coach.years_experience,
-    image: coach.image,
-    createdAt: coach.created_at,
-    approvalStatus: coach.approval_status,
-    userId: coach.user_id,
-  }));
-}
+
+  async getPendingCoaches(): Promise<any[]> {
+    const { data, error } = await supabase
+      .from('coaches')
+      .select('*')
+      .eq('approval_status', 'pending');
+    if (error) throw error;
+    return (data || []).map(coach => ({
+      id: coach.id,
+      name: coach.name,
+      email: coach.email,
+      bio: coach.bio,
+      location: coach.location,
+      pricePerHour: coach.price_per_hour,
+      yearsExperience: coach.years_experience,
+      image: coach.image,
+      createdAt: coach.created_at,
+      approvalStatus: coach.approval_status,
+      userId: coach.user_id,
+    }));
+  }
 
   // ------------------ Messaging ------------------
   async sendMessage(message: InsertMessage): Promise<Message> {
@@ -431,15 +541,16 @@ async getPendingCoaches(): Promise<any[]> {
       .order('createdAt', { ascending: true });
     return error ? [] : (data as Message[]);
   }
+
   async getUnreadMessagesCount(userId: string): Promise<number> {
-  const { count, error } = await supabase
-    .from('messages')
-    .select('id', { count: 'exact', head: true })
-    .eq('receiverId', userId)
-    .eq('isRead', false);
-  if (error) throw error;
-  return count ?? 0;
-}
+    const { count, error } = await supabase
+      .from('messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('receiverId', userId)
+      .eq('isRead', false);
+    if (error) throw error;
+    return count ?? 0;
+  }
 
   // ------------------ Coach Specialties ------------------
   async createCoachSpecialty(coachId: string, specialty: string): Promise<void> {
@@ -472,6 +583,6 @@ async getPendingCoaches(): Promise<any[]> {
       .insert({ id: uuidv4(), coach_id: coachId, ...video });
     if (error) throw error;
   }
-} 
+}
 
 export const storage = new DatabaseStorage();
