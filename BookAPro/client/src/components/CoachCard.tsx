@@ -107,9 +107,9 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
               </div>
               
               <div className="text-right">
-                <div className="text-2xl font-bold text-primary" data-testid={`text-price-${coach.id}`}>
-                  ${coach.pricePerHour}
-                </div>
+<div className="text-2xl font-bold text-primary" data-testid={`text-price-${coach.id}`}>
+  ${coach.pricePerHour ?? coach.price_per_hour}
+</div>
                 <div className="text-sm text-muted-foreground">per hour</div>
               </div>
             </div>

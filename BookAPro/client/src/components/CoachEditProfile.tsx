@@ -226,50 +226,75 @@ const handleGetUploadParameters = async (uppyFile) => {
 };
 
 const handleImageUploadComplete = async (result: any) => {
-  console.log("handleImageUploadComplete called with", result);
+  setIsUploadingImage(true);
+
   if (!result.successful || result.successful.length === 0) {
     setIsUploadingImage(false);
     return;
   }
 
-  setIsUploadingImage(true);
-
   const uploadedFile = result.successful[0];
-  const uploadUrl = uploadedFile.uploadURL;
-  console.log("uploadedFile", uploadedFile, "uploadUrl", uploadUrl);
+  console.log("Uppy file upload result:", uploadedFile);
 
-  if (uploadUrl) {
-    try {
-      const response = await fetch('/api/objects/normalize-profile-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ imageURL: uploadUrl }),
+  // For XHRUpload, the URL is here:
+  const uploadUrl = uploadedFile?.response?.body?.url;
+  console.log("Extracted uploadUrl:", uploadUrl);
+
+  if (!uploadUrl) {
+    setIsUploadingImage(false);
+    toast({
+      title: "Upload Failed",
+      description: "No upload URL found for the uploaded file.",
+      variant: "destructive",
+    });
+    return;
+  }
+
+  // Either skip normalization, or fix it!
+  // (1) If you do NOT need normalization, just use uploadUrl:
+  form.setValue('image', uploadUrl, { shouldValidate: true });
+  console.log("form image value after set (no normalization):", form.getValues('image'));
+  setIsUploadingImage(false);
+  toast({
+    title: "Profile Image Uploaded",
+    description: "Your profile image has been uploaded successfully.",
+  });
+
+  // (2) If you DO need normalization, keep this but make sure it works:
+  /*
+  try {
+    const response = await fetch('/api/objects/normalize-profile-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ imageURL: uploadUrl }),
+    });
+    const { objectPath } = await response.json();
+    console.log("normalize-profile-image objectPath:", objectPath);
+
+    if (response.ok && objectPath) {
+      form.setValue('image', objectPath, { shouldValidate: true });
+      console.log("form image value after set:", form.getValues('image'));
+      toast({
+        title: "Profile Image Uploaded",
+        description: "Your profile image has been uploaded successfully.",
       });
-      if (response.ok) {
-        const { objectPath } = await response.json();
-        console.log("Setting form image value to", objectPath);
-        form.setValue('image', objectPath, { shouldValidate: true });
-        setIsUploadingImage(false);
-        toast({
-          title: "Profile Image Uploaded",
-          description: "Your profile image has been uploaded successfully.",
-        });
-      } else {
-        setIsUploadingImage(false);
-        throw new Error('Failed to process uploaded image');
-      }
-    } catch (error) {
-      setIsUploadingImage(false);
+    } else {
       toast({
         title: "Upload Processing Failed",
         description: "There was an error processing your uploaded image.",
         variant: "destructive",
       });
     }
-  } else {
-    setIsUploadingImage(false);
+  } catch (error) {
+    toast({
+      title: "Upload Processing Failed",
+      description: "There was an error processing your uploaded image.",
+      variant: "destructive",
+    });
   }
+  setIsUploadingImage(false);
+  */
 };
   // Video upload logic (same as registration)
   const handleVideoUpload = (videoIndex: number) => async (result: any) => {

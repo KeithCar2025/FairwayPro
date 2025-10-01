@@ -14,7 +14,8 @@ const __dirname = path.dirname(__filename);
 import express from "express";
 import fs from "fs";
 import CoachEditProfile from "@/components/CoachEditProfile";
-import cors from "cors";
+import cors from "cors";import multer from "multer";
+const upload = multer();
 
 import {
   insertUserSchema,

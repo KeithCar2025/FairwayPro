@@ -4,12 +4,12 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react()],
-  root: path.resolve(__dirname, "client"), // client folder
+  root: path.resolve(__dirname, "client"),
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "client/src"), // your components & pages
-      "@shared": path.resolve(__dirname, "shared"),
-      "@assets": path.resolve(__dirname, "attached_assets"),
+     "@": path.resolve(__dirname, "client/src"),
+    "@shared": path.resolve(__dirname, "shared"),
+    "@assets": path.resolve(__dirname, "attached_assets"),
     },
   },
   build: {
@@ -18,7 +18,7 @@ export default defineConfig({
   },
   server: {
     fs: {
-      allow: [path.resolve(__dirname, "client")], // allow access to client folder
+      allow: [path.resolve(__dirname, "client")],
     },
   },
 });
