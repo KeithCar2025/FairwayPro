@@ -51,6 +51,7 @@ export interface IStorage {
   approveCoach(coachId: string, adminId: string): Promise<Coach>;
   rejectCoach(coachId: string, adminId: string): Promise<Coach>;
   getApprovedCoaches(): Promise<Coach[]>;
+  getStudentByUserId(userId: string): Promise<Student | undefined>;
 }
 
 function mapCoachUpdatesToDb(updates: any) {
@@ -141,7 +142,28 @@ export class DatabaseStorage implements IStorage {
   return (data || []).map(mapCoachDbToApi);
 }
   
+async getCoachCalendarSettings(coachId: string) {
+  const { data, error } = await supabase
+    .from('coach_calendar_settings')
+    .select('*')
+    .eq('coach_id', coachId)
+    .single();
 
+  if (error && error.code !== "PGRST116") {
+    throw error;
+  }
+
+  if (!data) return null;
+
+  return {
+    coachId: data.coach_id,
+    googleCalendarId: data.google_calendar_id,
+    googleRefreshToken: data.google_refresh_token,
+    isEnabled: data.is_enabled,
+    lastSyncedAt: data.last_synced_at,
+    lastSyncToken: data.last_sync_token
+  };
+}
   // ------------------ Users ------------------
   async getUser(id: string): Promise<User | undefined> {
     const { data, error } = await supabase
@@ -385,7 +407,15 @@ export class DatabaseStorage implements IStorage {
       .single();
     return error ? undefined : (data as Student);
   }
-
+async getStudentByUserId(userId: string): Promise<Student | undefined> {
+  const { data, error } = await supabase
+    .from('students')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+  if (error) return undefined;
+  return data as Student;
+}
   async createStudent(student: InsertStudent): Promise<Student> {
     const { data, error } = await supabase
       .from('students')

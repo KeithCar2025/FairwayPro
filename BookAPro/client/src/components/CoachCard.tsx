@@ -7,6 +7,7 @@ import { Star, MapPin, Clock, DollarSign } from "lucide-react";
 
 export interface Coach {
   id: string;
+  userId: string; 
   name: string;
   image?: string;
   rating: number;

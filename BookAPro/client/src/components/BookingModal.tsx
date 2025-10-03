@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,14 +8,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Calendar as CalendarIcon, Clock, DollarSign, MapPin } from "lucide-react";
+import { MapPin } from "lucide-react";
 import { Coach } from "./CoachCard";
 
 interface BookingModalProps {
   coach: Coach | null;
   isOpen: boolean;
   onClose: () => void;
-  onBook: (bookingData: BookingData) => void;
 }
 
 export interface BookingData {
@@ -34,7 +33,7 @@ export interface BookingData {
   };
 }
 
-export default function BookingModal({ coach, isOpen, onClose, onBook }: BookingModalProps) {
+export default function BookingModal({ coach, isOpen, onClose }: BookingModalProps) {
   const [selectedDate, setSelectedDate] = useState<Date>();
   const [selectedTime, setSelectedTime] = useState("");
   const [duration, setDuration] = useState("60");
@@ -47,13 +46,46 @@ export default function BookingModal({ coach, isOpen, onClose, onBook }: Booking
     phone: "",
     skillLevel: ""
   });
+  const [availableTimes, setAvailableTimes] = useState<string[]>([]);
+  const [loadingTimes, setLoadingTimes] = useState(false);
+  const [errorTimes, setErrorTimes] = useState<string | null>(null);
+  const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [bookingError, setBookingError] = useState<string | null>(null);
+  const [isBooking, setIsBooking] = useState(false);
+
+  useEffect(() => {
+    if (!coach || !selectedDate) {
+      setAvailableTimes([]);
+      setErrorTimes(null);
+      return;
+    }
+
+    async function fetchTimes() {
+      setLoadingTimes(true);
+      setErrorTimes(null);
+      try {
+        const res = await fetch(
+          `/api/coaches/${coach.id}/available-times?date=${selectedDate.toISOString().substring(0, 10)}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setAvailableTimes(data.times || []);
+        } else {
+          setAvailableTimes([]);
+          setErrorTimes("Could not load available times.");
+        }
+      } catch (error) {
+        setAvailableTimes([]);
+        setErrorTimes("Failed to fetch available times.");
+      } finally {
+        setLoadingTimes(false);
+      }
+    }
+
+    fetchTimes();
+  }, [coach, selectedDate]);
 
   if (!coach) return null;
-
-  // TODO: remove mock functionality
-  const availableTimes = [
-    "9:00 AM", "10:00 AM", "11:00 AM", "1:00 PM", "2:00 PM", "3:00 PM", "4:00 PM"
-  ];
 
   const lessonTypes = [
     { value: "individual", label: "Individual Lesson", price: coach.pricePerHour },
@@ -64,30 +96,92 @@ export default function BookingModal({ coach, isOpen, onClose, onBook }: Booking
   const calculateTotal = () => {
     const selectedLessonType = lessonTypes.find(t => t.value === lessonType);
     if (!selectedLessonType) return 0;
-    
     const hours = parseInt(duration) / 60;
     return Math.round(selectedLessonType.price * hours);
   };
 
-  const handleBook = () => {
+  // Helper to parse "1:00 PM" etc. into a Date object on selectedDate
+  function getDateTime(date: Date, timeStr: string): Date {
+    // timeStr format: "1:00 PM"
+    const [time, meridian] = timeStr.split(" ");
+    let [hours, minutes] = time.split(":").map(Number);
+    if (meridian === "PM" && hours !== 12) hours += 12;
+    if (meridian === "AM" && hours === 12) hours = 0;
+    const dt = new Date(date);
+    dt.setHours(hours, minutes, 0, 0);
+    return dt;
+  }
+
+  const handleBook = async () => {
+    setBookingError(null);
+    setBookingSuccess(false);
     if (!selectedDate || !selectedTime || !lessonType || !studentInfo.name || !studentInfo.email) {
-      console.log("Please fill in all required fields");
+      setBookingError("Please fill in all required fields");
       return;
     }
+    setIsBooking(true);
 
-    const bookingData: BookingData = {
-      coachId: coach.id,
-      date: selectedDate,
-      time: selectedTime,
-      duration,
-      lessonType,
-      location: location || coach.location,
-      notes,
-      studentInfo
-    };
+    try {
+      // 1. App-side booking
+      const bookingData = {
+        coachId: coach.id,
+        date: selectedDate, // Date object
+        time: selectedTime,
+        duration: Number(duration),
+        lesson_type: lessonType,
+        location: location || coach.location,
+        notes,
+        totalAmount: String(calculateTotal()),
+        studentInfo
+      };
+      await fetch('/api/bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(bookingData),
+      });
 
-    onBook(bookingData);
-    console.log("Booking submitted:", bookingData);
+      // 2. Create Google Calendar event
+      const startDateTime = getDateTime(selectedDate, selectedTime);
+      const endDateTime = new Date(startDateTime.getTime() + parseInt(duration) * 60000);
+
+      const eventRes = await fetch('/api/google/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+		coachUserId: coach.userId,
+          summary: `Lesson with ${studentInfo.name}`,
+          description: `Lesson type: ${lessonType}\nStudent: ${studentInfo.name}\nEmail: ${studentInfo.email}\nPhone: ${studentInfo.phone}\nSkill Level: ${studentInfo.skillLevel}\nNotes: ${notes}`,
+          start: startDateTime.toISOString(),
+          end: endDateTime.toISOString(),
+        }),
+      });
+
+      if (!eventRes.ok) {
+        // Try to parse JSON error, fallback to text
+        let msg = "Failed to add event to coach's Google Calendar.";
+        try {
+          const data = await eventRes.json();
+          if (data.error) msg += "\n" + data.error;
+          if (data.details) msg += "\n" + data.details;
+          if (data.google) msg += "\n" + JSON.stringify(data.google);
+        } catch {
+          msg += "\n" + await eventRes.text();
+        }
+        throw new Error(msg);
+      }
+
+      setBookingSuccess(true);
+      setTimeout(() => {
+        setIsBooking(false);
+        onClose();
+      }, 1500);
+
+    } catch (error) {
+      setBookingError(error.message || "Booking failed.");
+      setIsBooking(false);
+    }
   };
 
   return (
@@ -161,19 +255,31 @@ export default function BookingModal({ coach, isOpen, onClose, onBook }: Booking
             <div className="space-y-4">
               <div>
                 <Label className="text-base font-medium">Available Times *</Label>
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  {availableTimes.map((time) => (
-                    <Button
-                      key={time}
-                      variant={selectedTime === time ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setSelectedTime(time)}
-                      data-testid={`button-time-${time.replace(/[: ]/g, '-')}`}
-                    >
-                      {time}
-                    </Button>
-                  ))}
-                </div>
+                {loadingTimes && (
+                  <div className="text-sm text-muted-foreground">Loading...</div>
+                )}
+                {errorTimes && (
+                  <div className="text-sm text-destructive">{errorTimes}</div>
+                )}
+                {!loadingTimes && !errorTimes && (
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    {availableTimes.length > 0 ? (
+                      availableTimes.map((time) => (
+                        <Button
+                          key={time}
+                          variant={selectedTime === time ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setSelectedTime(time)}
+                          data-testid={`button-time-${time.replace(/[: ]/g, '-')}`}
+                        >
+                          {time}
+                        </Button>
+                      ))
+                    ) : (
+                      <span className="text-muted-foreground text-sm">No available times</span>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -301,6 +407,14 @@ export default function BookingModal({ coach, isOpen, onClose, onBook }: Booking
             </div>
           )}
 
+          {/* Booking Feedback */}
+          {bookingError && (
+            <div className="text-red-600 text-sm font-medium">{bookingError}</div>
+          )}
+          {bookingSuccess && (
+            <div className="text-green-600 text-sm font-medium">Booking successful! Added to calendar.</div>
+          )}
+
           {/* Action Buttons */}
           <div className="flex gap-3 pt-4">
             <Button variant="outline" onClick={onClose} className="flex-1">
@@ -308,11 +422,14 @@ export default function BookingModal({ coach, isOpen, onClose, onBook }: Booking
             </Button>
             <Button 
               onClick={handleBook}
-              disabled={!selectedDate || !selectedTime || !lessonType || !studentInfo.name || !studentInfo.email}
+              disabled={
+                !selectedDate || !selectedTime || !lessonType ||
+                !studentInfo.name || !studentInfo.email || isBooking
+              }
               className="flex-1"
               data-testid="button-confirm-booking"
             >
-              Book Lesson - ${calculateTotal()}
+              {isBooking ? "Booking..." : `Book Lesson - $${calculateTotal()}`}
             </Button>
           </div>
         </div>

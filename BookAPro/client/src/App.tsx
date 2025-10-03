@@ -111,6 +111,7 @@ const { data: approvedCoaches = [], isLoading, error } = useQuery<Coach[]>({
     // Map DB fields to frontend Coach type using correct column names!
 return data.map((c: any) => ({
   id: c.id,
+  userId: c.userId,
   name: c.name,
   image: c.image || maleCoachImage,
   rating: c.rating || 0,

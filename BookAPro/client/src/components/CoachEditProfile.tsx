@@ -188,14 +188,13 @@ export default function CoachEditProfile() {
   });
 
   // Google Calendar Connect/Disconnect
-  const handleGoogleCalendarConnect = async () => {
-    try {
-      window.location.href = "/api/google/calendar/connect";
-    } catch (error) {
-      toast({ title: "Google Calendar Error", description: "Could not connect calendar", variant: "destructive" });
-    }
-  };
-
+const handleGoogleCalendarConnect = async () => {
+  try {
+    window.location.href = "/api/google/auth";
+  } catch (error) {
+    toast({ title: "Google Calendar Error", description: "Could not connect calendar", variant: "destructive" });
+  }
+};
   const handleGoogleCalendarDisconnect = async () => {
     try {
       const response = await fetch("/api/google/calendar/disconnect", { method: "POST", credentials: "include" });

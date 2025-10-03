@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { pool } from './db';
+import { v4 as uuidv4 } from "uuid";
 import { supabase } from "./supabaseClient";
 import { createServer, type Server } from "http";
 import session from "express-session";
@@ -34,6 +35,13 @@ import {
 } from "./objectStorage.js";
 import { ObjectPermission } from "./objectAcl.js";
 
+import {
+  authRedirect,
+  oauthCallback,
+  getEvents,
+  createEvent
+} from "./controllers/googleCalendarController.js";
+import { createGoogleEvent } from "./services/googleCalendarService.js";
 
 import { pool } from "./db";
 pool.query("SELECT NOW()").then(res => {
@@ -131,23 +139,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // -----------------------------
   // AUTH ROUTES
   // -----------------------------
-  app.post("/api/auth/register", async (req, res) => {
-    try {
-      const { email, password } = req.body;
-      if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "Email and password required" });
 
-      const existingUser = await storage.getUserByEmail(email);
-      if (existingUser) return res.status(400).json({ error: "User already exists" });
+    const existingUser = await storage.getUserByEmail(email);
+    if (existingUser) return res.status(400).json({ error: "User already exists" });
 
-      const user = await storage.createUser({ email, password, role: "student" });
-      (req.session as any).userId = user.id;
+    const user = await storage.createUser({ email, password, role: "student" });
+    (req.session as any).userId = user.id;
 
-      res.json({ user: { id: user.id, email: user.email, role: user.role } });
-    } catch (err) {
-      console.error("Registration error:", err);
-      res.status(400).json({ error: "Registration failed" });
-    }
-  });
+    // Automatically create student profile upon registration
+await storage.createStudent({
+  id: uuidv4(),
+  user_id: user.id,
+  name: name || "",
+  phone: "",
+  skill_level: "",
+  preferences: ""
+});
+
+    res.json({ user: { id: user.id, email: user.email, role: user.role } });
+  } catch (err) {
+    console.error("Registration error:", err);
+    res.status(400).json({ error: "Registration failed" });
+  }
+});
 
   app.post("/api/auth/login", async (req, res) => {
     try {
@@ -381,7 +399,50 @@ app.put("/api/coaches/me", async (req, res) => {
       res.status(500).json({ error: "Coach search failed" });
     }
   });
+app.get("/api/google/auth", isAuthenticated, authRedirect);
+app.get("/api/google/callback", isAuthenticated, oauthCallback);
+app.get("/api/google/events", isAuthenticated, getEvents);
+app.post("/api/google/events", isAuthenticated, async (req, res) => {
+  try {
+    const { coachUserId, summary, description, start, end } = req.body;
+    if (!coachUserId || !summary || !description || !start || !end) {
+      return res.status(400).json({
+        error: "Missing required fields: coachUserId, summary, description, start, end are all required.",
+        received: req.body
+      });
+    }
+    const coach = await storage.getCoachByUserId(coachUserId);
+    if (!coach) {
+      return res.status(403).json({ error: "Coach not found or not authorized." });
+    }
+    // Use coach.id for calendar settings and event creation
+    const calendarSettings = await storage.getCoachCalendarSettings(coach.id);
+    if (!calendarSettings?.googleRefreshToken) {
+      return res.status(400).json({ error: "Coach has not connected Google Calendar." });
+    }
 
+    // --- THIS IS THE CRITICAL FIX ---
+    const event = await createGoogleEvent(coach.id, {
+      summary,
+      description,
+      start: new Date(start).toISOString(),
+      end: new Date(end).toISOString()
+    });
+
+    res.json({ success: true, event });
+
+  } catch (error) {
+    console.error("Error in /api/google/events:", error);
+    if (error.response?.data) {
+      console.error("Google API error details:", error.response.data);
+    }
+    res.status(400).json({
+      error: error.message,
+      details: error.stack,
+      google: error.response?.data
+    });
+  }
+});
   // --- Google Reviews ---
   app.post("/api/coaches/fetch-google-reviews", async (req, res) => {
     try {
@@ -431,7 +492,64 @@ app.put("/api/coaches/me", async (req, res) => {
       res.status(500).json({ error: "Failed to sync Google Reviews" });
     }
   });
+app.get("/api/coaches/:id/available-times", async (req, res) => {
+  try {
+    const { id: coachId } = req.params;
+    const { date } = req.query; // Expecting YYYY-MM-DD
 
+    if (!coachId || !date) {
+      return res.status(400).json({ error: "coachId and date are required" });
+    }
+
+    // Example: generate candidate slots (adjust as needed)
+    const defaultSlots = [
+      "9:00 AM", "10:00 AM", "11:00 AM", "1:00 PM",
+      "2:00 PM", "3:00 PM", "4:00 PM"
+    ];
+
+    // --- Fetch Google Calendar Events for the day ---
+    // You should implement this utility function
+    const { fetchGoogleEvents } = await import("./services/googleCalendarService.js");
+    let busyTimes: { start: string, end: string }[] = [];
+    try {
+      const events = await fetchGoogleEvents(coachId);
+      // Filter events for this date
+      busyTimes = events
+        .filter(event => {
+          // event.start.dateTime and event.end.dateTime are ISO strings
+          return event.start?.dateTime && event.end?.dateTime &&
+            event.start.dateTime.startsWith(date); // crude check, works for single-day events
+        })
+        .map(event => ({
+          start: event.start.dateTime,
+          end: event.end.dateTime
+        }));
+    } catch (err) {
+      console.error("Error fetching Google events:", err);
+      // Optionally, return all slots if calendar is not connected
+    }
+
+    // Utility to check for overlap; you may want to make this time-zone aware
+    function isSlotAvailable(slotTime: string) {
+      // Convert slotTime (e.g., '9:00 AM') to a Date on the target day
+      const slotStart = new Date(`${date} ${slotTime}`);
+      const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000); // 1hr slot
+      return !busyTimes.some(({ start, end }) => {
+        const busyStart = new Date(start);
+        const busyEnd = new Date(end);
+        return slotStart < busyEnd && slotEnd > busyStart;
+      });
+    }
+
+    // Filter out busy slots
+    const available = defaultSlots.filter(isSlotAvailable);
+
+    res.json({ times: available });
+  } catch (error) {
+    console.error("Available times error:", error);
+    res.status(500).json({ error: "Failed to fetch available times" });
+  }
+});
   // -----------------------------
   // STUDENT ROUTES
   // -----------------------------
@@ -462,21 +580,38 @@ app.put("/api/coaches/me", async (req, res) => {
   // -----------------------------
   // BOOKING ROUTES
   // -----------------------------
-  app.post("/api/bookings", async (req, res) => {
-    try {
-      const userId = (req.session as any)?.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+app.post("/api/bookings", async (req, res) => {
+  try {
+    const userId = (req.session as any)?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
-      const student = await storage.getStudentByUserId(userId);
-      if (!student) return res.status(400).json({ error: "Student profile required for booking" });
+    const student = await storage.getStudentByUserId(userId);
+    if (!student) return res.status(400).json({ error: "Student profile required for booking" });
 
-      const booking = await storage.createBooking(insertBookingSchema.parse({ ...req.body, studentId: student.id }));
-      res.json(booking);
-    } catch (error) {
-      console.error("Booking creation error:", error);
-      res.status(400).json({ error: "Failed to create booking" });
-    }
-  });
+    // Map frontend fields to DB columns
+    const reqBody = {
+      ...req.body,
+	  id: uuidv4(),
+	  lesson_type: req.body.lesson_type ?? req.body.lessonType,
+      student_id: student.id,
+      coach_id: req.body.coachId,                  // <-- map correctly
+      date: req.body.date ? new Date(req.body.date) : undefined,
+      duration: req.body.duration ? Number(req.body.duration) : undefined,
+      total_amount: req.body.totalAmount ? Number(req.body.totalAmount) : undefined, // <-- map and convert
+    };
+
+    // Optionally delete camelCase props to avoid confusion
+    delete reqBody.coachId;
+    delete reqBody.studentId;
+    delete reqBody.totalAmount;
+
+    const booking = await storage.createBooking(insertBookingSchema.parse(reqBody));
+    res.json(booking);
+  } catch (error) {
+    console.error("Booking creation error:", error);
+    res.status(400).json({ error: "Failed to create booking" });
+  }
+});
 
   app.get("/api/bookings/my-bookings", isAuthenticated, async (req, res) => {
     try {

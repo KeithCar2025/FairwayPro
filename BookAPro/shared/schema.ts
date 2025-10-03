@@ -3,10 +3,10 @@ import { pgTable, text, varchar, integer, decimal, timestamp, boolean } from "dr
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-import { createInsertSchema } from "drizzle-zod";
-import { coaches } from "./tables"; // your Drizzle table
 
-// Base users table for authentication
+// --- Table Definitions ---
+
+// Users table for authentication
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull().unique(),
@@ -47,10 +47,10 @@ export const coaches = pgTable("coaches", {
   approvedBy: varchar("approved_by").references(() => users.id),
   latitude: decimal("latitude", { precision: 10, scale: 8 }),
   longitude: decimal("longitude", { precision: 11, scale: 8 }),
-  googleReviewsUrl: text("google_reviews_url"), // Google Business/Maps reviews URL
+  googleReviewsUrl: text("google_reviews_url"),
   googleRating: decimal("google_rating", { precision: 3, scale: 2 }),
   googleReviewCount: integer("google_review_count").default(0),
-  lastGoogleSync: timestamp("last_google_sync"), // When Google Reviews were last synced
+  lastGoogleSync: timestamp("last_google_sync"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -83,7 +83,7 @@ export const coachVideos = pgTable("coach_videos", {
   description: text("description").notNull(),
   thumbnail: text("thumbnail").notNull(),
   duration: text("duration").notNull(),
-  videoUrl: text("video_url"), // URL to actual video file
+  videoUrl: text("video_url"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -95,13 +95,13 @@ export const bookings = pgTable("bookings", {
   date: timestamp("date").notNull(),
   time: text("time").notNull(),
   duration: integer("duration").notNull().default(60), // minutes
-  lessonType: text("lesson_type").notNull(), // individual, group
+  lessonType: text("lesson_type").notNull(),
   location: text("location").notNull(),
   notes: text("notes"),
-  status: text("status").notNull().default("pending"), // pending, confirmed, completed, cancelled
+  status: text("status").notNull().default("pending"),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
-  paymentStatus: text("payment_status").notNull().default("pending"), // pending, paid, failed
-  paymentIntentId: text("payment_intent_id"), // Stripe payment intent ID
+  paymentStatus: text("payment_status").notNull().default("pending"),
+  paymentIntentId: text("payment_intent_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -111,7 +111,7 @@ export const reviews = pgTable("reviews", {
   bookingId: varchar("booking_id").notNull().unique().references(() => bookings.id, { onDelete: "cascade" }),
   studentId: varchar("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
   coachId: varchar("coach_id").notNull().references(() => coaches.id, { onDelete: "cascade" }),
-  rating: integer("rating").notNull(), // 1-5 stars
+  rating: integer("rating").notNull(),
   comment: text("comment"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -120,9 +120,9 @@ export const reviews = pgTable("reviews", {
 export const coachAvailability = pgTable("coach_availability", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   coachId: varchar("coach_id").notNull().references(() => coaches.id, { onDelete: "cascade" }),
-  dayOfWeek: integer("day_of_week").notNull(), // 0 = Sunday, 1 = Monday, etc.
-  startTime: text("start_time").notNull(), // Format: "09:00"
-  endTime: text("end_time").notNull(), // Format: "17:00"
+  dayOfWeek: integer("day_of_week").notNull(),
+  startTime: text("start_time").notNull(),
+  endTime: text("end_time").notNull(),
   isAvailable: boolean("is_available").default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -131,11 +131,11 @@ export const coachAvailability = pgTable("coach_availability", {
 export const coachCalendarSettings = pgTable("coach_calendar_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   coachId: varchar("coach_id").notNull().unique().references(() => coaches.id, { onDelete: "cascade" }),
-  googleCalendarId: text("google_calendar_id"), // Google Calendar ID for sync
-  googleRefreshToken: text("google_refresh_token"), // For API access
+  googleCalendarId: text("google_calendar_id"),
+  googleRefreshToken: text("google_refresh_token"),
   isEnabled: boolean("is_enabled").default(false),
   lastSyncedAt: timestamp("last_synced_at"),
-  lastSyncToken: text("last_sync_token"), // Token for incremental sync
+  lastSyncToken: text("last_sync_token"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -145,8 +145,8 @@ export const coachBusyTimes = pgTable("coach_busy_times", {
   coachId: varchar("coach_id").notNull().references(() => coaches.id, { onDelete: "cascade" }),
   startDateTime: timestamp("start_date_time").notNull(),
   endDateTime: timestamp("end_date_time").notNull(),
-  source: text("source").notNull().default("google_calendar"), // "google_calendar", "manual", "booking"
-  externalEventId: text("external_event_id"), // ID from external calendar
+  source: text("source").notNull().default("google_calendar"),
+  externalEventId: text("external_event_id"),
   title: text("title"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -155,10 +155,10 @@ export const coachBusyTimes = pgTable("coach_busy_times", {
 export const adminActions = pgTable("admin_actions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   adminId: varchar("admin_id").notNull().references(() => users.id),
-  action: text("action").notNull(), // "approve_coach", "reject_coach", "delete_coach", "delete_student", "send_signup_link"
-  targetType: text("target_type").notNull(), // "coach", "student", "user"
-  targetId: varchar("target_id"), // ID of the affected entity
-  details: text("details"), // JSON string with additional details
+  action: text("action").notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: varchar("target_id"),
+  details: text("details"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -167,13 +167,13 @@ export const messages = pgTable("messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   senderId: varchar("sender_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   receiverId: varchar("receiver_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  bookingId: varchar("booking_id").references(() => bookings.id, { onDelete: "cascade" }), // Optional - messages can be tied to specific bookings
+  bookingId: varchar("booking_id").references(() => bookings.id, { onDelete: "cascade" }),
   content: text("content").notNull(),
   isRead: boolean("is_read").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Define relationships
+// --- Relationships ---
 export const usersRelations = relations(users, ({ one }) => ({
   student: one(students, { fields: [users.id], references: [students.userId] }),
   coach: one(coaches, { fields: [users.id], references: [coaches.userId] }),
@@ -244,7 +244,7 @@ export const messagesRelations = relations(messages, ({ one }) => ({
   booking: one(bookings, { fields: [messages.bookingId], references: [bookings.id] }),
 }));
 
-// Insert schemas for validation
+// --- Zod Insert Schemas ---
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
@@ -262,17 +262,27 @@ const baseCoachSchema = createInsertSchema(coaches).omit({
   reviewCount: true,
 });
 
-// Step 2: extend it properly
 export const insertCoachSchema = z.object({
   ...baseCoachSchema.shape,
   pricePerHour: z.number(),
 });
 
-export const insertBookingSchema = createInsertSchema(bookings).omit({
-  id: true,
-  createdAt: true,
-  status: true,
-  paymentStatus: true,
+// -- Booking Zod Schema (explicit, snake_case) --
+export const insertBookingSchema = z.object({
+  id: z.string().optional(),
+  student_id: z.string(),
+  coach_id: z.string(),
+  date: z.date(),
+  time: z.string(),
+  duration: z.number(),
+  lesson_type: z.string(),
+  location: z.string(),
+  notes: z.string().optional(),
+  status: z.string().optional(),
+  total_amount: z.number(),
+  payment_status: z.string().optional(),
+  payment_intent_id: z.string().optional(),
+  created_at: z.date().optional(),
 });
 
 export const insertReviewSchema = createInsertSchema(reviews).omit({
@@ -286,7 +296,7 @@ export const insertMessageSchema = createInsertSchema(messages).omit({
   isRead: true,
 });
 
-// TypeScript types
+// --- TypeScript Types ---
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 
