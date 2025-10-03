@@ -42,7 +42,7 @@ import {
   createEvent
 } from "./controllers/googleCalendarController.js";
 import { createGoogleEvent } from "./services/googleCalendarService.js";
-
+import authGoogle from './auth/authGoogle.js';
 import { pool } from "./db";
 pool.query("SELECT NOW()").then(res => {
   console.log("Pool connection OK!", res.rows[0]);
@@ -107,39 +107,25 @@ export function mapCoachToDB(coach: z.infer<typeof insertCoachSchema>) {
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // --- CORS ---
-  app.use(cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
-    credentials: true,
-  }));
+app.use(cors({
+  origin: [
+    "http://localhost:3000",
+    "http://localhost:5000",
+    process.env.FRONTEND_URL
+  ].filter(Boolean),
+  credentials: true,
+}));
 
-  // --- Session setup (ALWAYS use shared pool!) ---
-  const PgSession = ConnectPgSimple(session);
-  app.use(
-    session({
-      store: new PgSession({
-        pool: pool, // CRITICAL: use shared pool, not conString!
-        tableName: "session",
-        createTableIfMissing: true,
-      }),
-      secret: process.env.SESSION_SECRET || "dev-secret",
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        maxAge: 24 * 60 * 60 * 1000,
-        secure: process.env.NODE_ENV === "production",
-        httpOnly: true,
-        sameSite: "lax",
-      },
-    })
-  );
 
   // --- Body parser ---
   app.use(express.json());
 
+app.use('/api/auth', authGoogle);
   // -----------------------------
   // AUTH ROUTES
   // -----------------------------
 app.post("/api/auth/register", async (req, res) => {
+console.log("req.session at start of register:", req.session);
   try {
     const { email, password, name } = req.body;
     if (!email || !password) return res.status(400).json({ error: "Email and password required" });
@@ -147,26 +133,25 @@ app.post("/api/auth/register", async (req, res) => {
     const existingUser = await storage.getUserByEmail(email);
     if (existingUser) return res.status(400).json({ error: "User already exists" });
 
-    const user = await storage.createUser({ email, password, role: "student" });
-    (req.session as any).userId = user.id;
+    const user = await storage.createUser({ email, password, role: "student" }); // Make sure this sets auth_provider
+    (req.session).userId = user.id;
 
-    // Automatically create student profile upon registration
-await storage.createStudent({
-  id: uuidv4(),
-  user_id: user.id,
-  name: name || "",
-  phone: "",
-  skill_level: "",
-  preferences: ""
-});
+    await storage.createStudent({
+      id: uuidv4(),
+      user_id: user.id,
+      name: name || "",
+      phone: "",
+      skill_level: "",
+      preferences: ""
+    });
 
     res.json({ user: { id: user.id, email: user.email, role: user.role } });
   } catch (err) {
-    console.error("Registration error:", err);
+    // PRINT THE FULL ERROR OBJECT
+    console.error("Registration error:", err, err?.message, err?.details);
     res.status(400).json({ error: "Registration failed" });
   }
 });
-
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { email, password } = req.body;
@@ -180,7 +165,11 @@ await storage.createStudent({
           console.error("Session regeneration failed:", err);
           return res.status(500).json({ error: "Session error" }); // return!
         }
-        (req.session as any).userId = user.id;
+        if (req.session) {
+  req.session.userId = user.id;
+} else {
+  console.warn("req.session is undefined during registration");
+}
         res.json({ user: { id: user.id, email: user.email, role: user.role } });
       });
     } catch (err) {
@@ -614,36 +603,36 @@ app.post("/api/bookings", async (req, res) => {
 });
 
   app.get("/api/bookings/my-bookings", isAuthenticated, async (req, res) => {
-    try {
-      const userId = (req.session as any)?.userId;
-      const user = await storage.getUser(userId);
-      if (!user) return res.status(401).json({ error: "User not found" });
+  try {
+    const userId = (req.session as any)?.userId;
+    const user = await storage.getUser(userId);
+    if (!user) return res.status(401).json({ error: "User not found" });
 
-      let bookings: any[] = [];
-      if (user.role === 'student') {
-        const student = await storage.getStudentByUserId(userId);
-        if (student) bookings = await storage.getBookingsByStudent(student.id);
-      } else if (user.role === 'coach') {
-        const coach = await storage.getCoach(userId);
-        if (coach) bookings = await storage.getBookingsByCoach(coach.id);
-      }
-
-      const enriched = await Promise.all(bookings.map(async b => {
-        const coach = await storage.getCoach(b.coachId);
-        const student = await storage.getStudent(b.studentId);
-        return {
-          ...b,
-          coach: coach ? { name: coach.name, image: coach.image } : null,
-          student: student ? { name: student.name } : null
-        };
-      }));
-
-      res.json({ bookings: enriched });
-    } catch (error) {
-      console.error("Error fetching bookings:", error);
-      res.status(500).json({ error: "Failed to fetch bookings" });
+    let bookings: any[] = [];
+    if (user.role === 'student') {
+      const student = await storage.getStudentByUserId(userId);
+      if (student) bookings = await storage.getBookingsByStudent(student.id);
+    } else if (user.role === 'coach') {
+      const coach = await storage.getCoachByUserId(userId); // <--- FIXED
+      if (coach) bookings = await storage.getBookingsByCoach(coach.id);
     }
-  });
+
+    const enriched = await Promise.all(bookings.map(async b => {
+      const coach = await storage.getCoach(b.coach_id);
+      const student = await storage.getStudent(b.student_id);
+      return {
+        ...b,
+        coach: coach ? { name: coach.name, image: coach.image } : null,
+        student: student ? { name: student.name } : null
+      };
+    }));
+
+    res.json({ bookings: enriched });
+  } catch (error) {
+    console.error("Error fetching bookings:", error);
+    res.status(500).json({ error: "Failed to fetch bookings" });
+  }
+});
 
   // -----------------------------
   // REVIEW ROUTES

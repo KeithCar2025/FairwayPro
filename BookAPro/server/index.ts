@@ -7,6 +7,7 @@ import { pool } from "./db"; // Make sure pool is the shared PG pool!
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { supabase } from "./supabase"; // your supabase client
+import passport from "passport";
 
 const app = express();
 
@@ -40,6 +41,10 @@ app.use(
     },
   })
 );
+
+
+app.use(passport.initialize());
+app.use(passport.session());
 
 // --- Health Check Route ---
 app.get("/healthz", (_req, res) => res.send("OK"));

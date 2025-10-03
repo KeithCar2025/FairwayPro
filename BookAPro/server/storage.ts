@@ -183,30 +183,42 @@ async getCoachCalendarSettings(coachId: string) {
     return error ? null : (data as User);
   }
 
-  async createUser(userData: CreateUserData): Promise<User> {
-    const hashedPassword = await bcrypt.hash(userData.password, 12);
+async createUser(userData: CreateUserData): Promise<User> {
+  const hashedPassword = await bcrypt.hash(userData.password, 12);
 
-    const { data, error } = await supabase
-      .from('users')
-      .insert({
-        id: uuidv4(),
-        email: userData.email,
-        password_hash: hashedPassword,
-        role: userData.role || 'student',
-      })
-      .select()
-      .single();
+  const { data, error } = await supabase
+    .from('users')
+    .insert({
+      id: uuidv4(),
+      email: userData.email,
+      password_hash: hashedPassword,
+      role: userData.role || 'student',
+      auth_provider: 'password', // <--- ADD THIS LINE
+    })
+    .select()
+    .single();
 
-    if (error) throw error;
-    return data as User;
+  if (error) throw error;
+  return data as User;
+}
+
+async verifyPassword(email: string, password: string): Promise<User | null> {
+  const user = await this.getUserByEmail(email);
+  if (!user) return null;
+
+  // Allow password login for 'password', 'local', or null (legacy)
+  if (
+    user.auth_provider !== 'password' &&
+    user.auth_provider !== 'local' &&
+    user.auth_provider !== null
+  ) {
+    // prevent password login for Google or other OAuth users
+    return null;
   }
 
-  async verifyPassword(email: string, password: string): Promise<User | null> {
-    const user = await this.getUserByEmail(email);
-    if (!user) return null;
-    const isValid = await bcrypt.compare(password, user.password_hash);
-    return isValid ? user : null;
-  }
+  const isValid = await bcrypt.compare(password, user.password_hash);
+  return isValid ? user : null;
+}
 
   async isUserAdmin(userId: string): Promise<boolean> {
     const { data, error } = await supabase
@@ -243,7 +255,20 @@ async getCoachCalendarSettings(coachId: string) {
     if (error) throw error;
     return data as Coach[];
   }
-
+async getBookingsByCoach(coachId) {
+  const { data, error } = await supabase
+    ? await supabase
+      .from('bookings')
+      .select('*')
+      .eq('coach_id', coachId)
+      .order('date', { ascending: false })
+    : await pool.query('SELECT * FROM bookings WHERE coach_id = $1 ORDER BY date DESC', [coachId]);
+  
+  if (error) throw error;
+  if (data) return data;
+  if (typeof rows !== 'undefined') return rows;
+  return [];
+}
   async getAllBookings(): Promise<Booking[]> {
     const { data, error } = await supabase
       .from('bookings')
@@ -447,6 +472,16 @@ async getStudentByUserId(userId: string): Promise<Student | undefined> {
   }
 
   // ------------------ Bookings ------------------
+  async getBookingsByStudent(studentId) {
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('*')
+    .eq('student_id', studentId)
+    .order('date', { ascending: false }); // Most recent first
+  if (error) throw error;
+  return data;
+}
+  
   async getBooking(id: string): Promise<Booking | undefined> {
     const { data, error } = await supabase
       .from('bookings')

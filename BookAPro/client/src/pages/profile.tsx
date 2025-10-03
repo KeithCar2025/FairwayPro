@@ -46,6 +46,7 @@ interface Booking {
     image?: string;
   };
   student?: {
+    id?: string; // <-- Make sure id is included
     name: string;
   };
 }
@@ -59,22 +60,25 @@ export default function Profile() {
   const [isLoading, setIsLoading] = useState(true);
   const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
 
+  // Message modal state (coach only)
+  const [messageTo, setMessageTo] = useState<{ id: string; name: string } | null>(null);
+  const [messageContent, setMessageContent] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
   useEffect(() => {
     loadProfile();
   }, []);
 
   const loadProfile = async () => {
     try {
-      // Check authentication
       const authResponse = await fetch('/api/auth/me', {
         credentials: 'include',
       });
-      
       if (!authResponse.ok) {
         setLocation('/');
         return;
       }
-
       const authData = await authResponse.json();
       setCurrentUser(authData.user);
 
@@ -84,11 +88,7 @@ export default function Profile() {
       } else if (authData.user.role === 'coach') {
         await loadCoachProfile(authData.user.id);
       }
-
-      // Load bookings
       await loadBookings();
-
-      // Load unread messages count
       await loadUnreadMessagesCount();
     } catch (error) {
       console.error('Error loading profile:', error);
@@ -100,9 +100,7 @@ export default function Profile() {
 
   const loadStudentProfile = async (userId: string) => {
     try {
-      const response = await fetch(`/api/students/profile/${userId}`, {
-        credentials: 'include',
-      });
+      const response = await fetch(`/api/students/profile/${userId}`, { credentials: 'include' });
       if (response.ok) {
         const data = await response.json();
         setStudentProfile(data.student);
@@ -114,9 +112,7 @@ export default function Profile() {
 
   const loadCoachProfile = async (userId: string) => {
     try {
-      const response = await fetch(`/api/coaches/profile/${userId}`, {
-        credentials: 'include',
-      });
+      const response = await fetch(`/api/coaches/profile/${userId}`, { credentials: 'include' });
       if (response.ok) {
         const data = await response.json();
         setCoachProfile(data.coach);
@@ -128,9 +124,7 @@ export default function Profile() {
 
   const loadBookings = async () => {
     try {
-      const response = await fetch('/api/bookings/my-bookings', {
-        credentials: 'include',
-      });
+      const response = await fetch('/api/bookings/my-bookings', { credentials: 'include' });
       if (response.ok) {
         const data = await response.json();
         setBookings(data.bookings || []);
@@ -142,9 +136,7 @@ export default function Profile() {
 
   const loadUnreadMessagesCount = async () => {
     try {
-      const response = await fetch('/api/messages/unread-count', {
-        credentials: 'include',
-      });
+      const response = await fetch('/api/messages/unread-count', { credentials: 'include' });
       if (response.ok) {
         const data = await response.json();
         setUnreadMessagesCount(data.count || 0);
@@ -156,11 +148,7 @@ export default function Profile() {
 
   const handleSignOut = async () => {
     try {
-      const response = await fetch('/api/auth/logout', {
-        method: 'POST',
-        credentials: 'include',
-      });
-      
+      const response = await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
       if (response.ok) {
         setLocation('/');
       }
@@ -169,14 +157,13 @@ export default function Profile() {
     }
   };
 
- const handleEditProfile = () => {
-  if (currentUser?.role === "coach") {
-    setLocation("/coach/edit-profile");
-  } else if (currentUser?.role === "student") {
-    setLocation("/student/edit-profile");
-  }
-  // Optionally handle admin or other roles
-};
+  const handleEditProfile = () => {
+    if (currentUser?.role === "coach") {
+      setLocation("/coach/edit-profile");
+    } else if (currentUser?.role === "student") {
+      setLocation("/student/edit-profile");
+    }
+  };
 
   const getUserDisplayName = () => {
     if (studentProfile) return studentProfile.name;
@@ -198,6 +185,41 @@ export default function Profile() {
       case 'cancelled': return 'destructive';
       default: return 'secondary';
     }
+  };
+
+  // Message modal handlers (coach only)
+  const handleOpenMessage = (student: { id?: string; name: string }) => {
+    if (student.id) setMessageTo({ id: student.id, name: student.name });
+  };
+  const handleCloseMessage = () => {
+    setMessageTo(null);
+    setMessageContent("");
+    setSendError(null);
+  };
+  const handleSendMessage = async () => {
+    if (!messageTo?.id || !messageContent.trim()) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      const res = await fetch("/api/messages/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          receiverId: messageTo.id,
+          content: messageContent
+        })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setSendError(data.error || "Failed to send message");
+      } else {
+        handleCloseMessage();
+      }
+    } catch (err) {
+      setSendError("Failed to send message");
+    }
+    setSending(false);
   };
 
   if (isLoading) {
@@ -360,11 +382,24 @@ export default function Profile() {
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <p className="font-medium">
-                            {currentUser.role === 'coach' ? booking.student?.name : booking.coach?.name}
+                            Lesson with {currentUser.role === 'coach'
+                              ? booking.student?.name || "Unknown Student"
+                              : booking.coach?.name || "Unknown Coach"}
                           </p>
                           <Badge variant={getStatusColor(booking.status)}>
                             {booking.status}
                           </Badge>
+                          {/* --- Message Button: ONLY FOR COACHES --- */}
+                          {(currentUser.role === 'coach' && booking.student?.id) ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="ml-2"
+                              onClick={() => handleOpenMessage(booking.student!)}
+                            >
+                              Message
+                            </Button>
+                          ) : null}
                         </div>
                         <p className="text-sm text-muted-foreground">
                           {new Date(booking.date).toLocaleDateString()} at {booking.time}
@@ -390,6 +425,33 @@ export default function Profile() {
             )}
           </CardContent>
         </Card>
+
+        {/* --- Message Modal: Only shown for coaches --- */}
+        {(currentUser.role === 'coach' && messageTo) && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+            <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
+              <h2 className="text-lg font-bold mb-2">Message {messageTo.name}</h2>
+              <textarea
+                className="w-full border rounded p-2 mb-2"
+                rows={4}
+                value={messageContent}
+                onChange={e => setMessageContent(e.target.value)}
+                placeholder="Type your message..."
+                disabled={sending}
+              />
+              {sendError && <div className="text-red-500 text-sm mb-2">{sendError}</div>}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={handleCloseMessage} disabled={sending}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSendMessage} loading={sending} disabled={sending || !messageContent.trim()}>
+                  Send
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

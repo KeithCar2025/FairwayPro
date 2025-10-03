@@ -29,6 +29,7 @@ interface Booking {
     image?: string;
   };
   student?: {
+    id?: string; // Make sure id is present for message button
     name: string;
   };
 }
@@ -42,13 +43,19 @@ export default function MyBookings() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
+  // Modal/message state for coach
+  const [messageTo, setMessageTo] = useState<{ id: string; name: string } | null>(null);
+  const [messageContent, setMessageContent] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
   useEffect(() => {
     loadBookings();
   }, []);
 
   useEffect(() => {
     filterBookings();
-  }, [bookings, searchTerm, statusFilter]);
+  }, [bookings, searchTerm, statusFilter, currentUser]);
 
   const loadBookings = async () => {
     try {
@@ -56,12 +63,10 @@ export default function MyBookings() {
       const authResponse = await fetch('/api/auth/me', {
         credentials: 'include',
       });
-      
       if (!authResponse.ok) {
         setLocation('/');
         return;
       }
-
       const authData = await authResponse.json();
       setCurrentUser(authData.user);
 
@@ -133,9 +138,39 @@ export default function MyBookings() {
     return filteredBookings.filter(booking => booking.status === 'cancelled');
   };
 
-  const sendMessage = async (bookingId: string, recipientName: string) => {
-    // This would open a message modal or navigate to inbox with pre-filled recipient
-    console.log(`Send message for booking ${bookingId} to ${recipientName}`);
+  // Coach-only messaging modal handlers
+  const handleOpenMessage = (student: { id?: string; name: string }) => {
+    if (student.id) setMessageTo({ id: student.id, name: student.name });
+  };
+  const handleCloseMessage = () => {
+    setMessageTo(null);
+    setMessageContent("");
+    setSendError(null);
+  };
+  const handleSendMessage = async () => {
+    if (!messageTo?.id || !messageContent.trim()) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      const res = await fetch("/api/messages/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          receiverId: messageTo.id,
+          content: messageContent
+        })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setSendError(data.error || "Failed to send message");
+      } else {
+        handleCloseMessage();
+      }
+    } catch (err) {
+      setSendError("Failed to send message");
+    }
+    setSending(false);
   };
 
   if (isLoading) {
@@ -155,6 +190,12 @@ export default function MyBookings() {
   const upcomingBookings = getUpcomingBookings();
   const pastBookings = getPastBookings();
   const cancelledBookings = getCancelledBookings();
+
+  // Helper: get display name for lesson (student for coach, coach for student)
+  const getLessonWithName = (booking: Booking) =>
+    currentUser.role === 'coach'
+      ? booking.student?.name || "Unknown Student"
+      : booking.coach?.name || "Unknown Coach";
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl">
@@ -230,6 +271,7 @@ export default function MyBookings() {
             </TabsTrigger>
           </TabsList>
 
+          {/* Upcoming Bookings */}
           <TabsContent value="upcoming" className="space-y-4">
             {upcomingBookings.length === 0 ? (
               <Card>
@@ -253,14 +295,24 @@ export default function MyBookings() {
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-2">
                             <h3 className="font-semibold text-lg">
-                              {currentUser.role === 'coach' 
-                                ? `Lesson with ${booking.student?.name}`
-                                : `Lesson with ${booking.coach?.name}`
-                              }
+                              Lesson with {getLessonWithName(booking)}
                             </h3>
                             <Badge variant={getStatusColor(booking.status)}>
                               {booking.status}
                             </Badge>
+                            {/* Only show Message button if coach and student id exists */}
+                            {(currentUser.role === 'coach' && booking.student?.id) && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="ml-2"
+                                onClick={() => handleOpenMessage(booking.student!)}
+                                data-testid={`button-message-${booking.id}`}
+                              >
+                                <MessageCircle className="w-4 h-4 mr-2" />
+                                Message
+                              </Button>
+                            )}
                           </div>
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-muted-foreground">
                             <div className="flex items-center gap-2">
@@ -289,21 +341,6 @@ export default function MyBookings() {
                           <p className="font-semibold text-lg text-primary">
                             ${booking.totalAmount}
                           </p>
-                          <div className="mt-2 space-y-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => sendMessage(booking.id, 
-                                currentUser.role === 'coach' 
-                                  ? booking.student?.name || '' 
-                                  : booking.coach?.name || ''
-                              )}
-                              data-testid={`button-message-${booking.id}`}
-                            >
-                              <MessageCircle className="w-4 h-4 mr-2" />
-                              Message
-                            </Button>
-                          </div>
                         </div>
                       </div>
                     </CardContent>
@@ -313,6 +350,7 @@ export default function MyBookings() {
             )}
           </TabsContent>
 
+          {/* Past Bookings */}
           <TabsContent value="past" className="space-y-4">
             {pastBookings.length === 0 ? (
               <Card>
@@ -333,14 +371,23 @@ export default function MyBookings() {
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-2">
                             <h3 className="font-semibold">
-                              {currentUser.role === 'coach' 
-                                ? `Lesson with ${booking.student?.name}`
-                                : `Lesson with ${booking.coach?.name}`
-                              }
+                              Lesson with {getLessonWithName(booking)}
                             </h3>
                             <Badge variant={getStatusColor(booking.status)}>
                               {booking.status}
                             </Badge>
+                            {(currentUser.role === 'coach' && booking.student?.id) && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="ml-2"
+                                onClick={() => handleOpenMessage(booking.student!)}
+                                data-testid={`button-message-${booking.id}`}
+                              >
+                                <MessageCircle className="w-4 h-4 mr-2" />
+                                Message
+                              </Button>
+                            )}
                           </div>
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-muted-foreground">
                             <div className="flex items-center gap-2">
@@ -370,6 +417,7 @@ export default function MyBookings() {
             )}
           </TabsContent>
 
+          {/* Cancelled Bookings */}
           <TabsContent value="cancelled" className="space-y-4">
             {cancelledBookings.length === 0 ? (
               <Card>
@@ -386,14 +434,23 @@ export default function MyBookings() {
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-2">
                             <h3 className="font-semibold line-through">
-                              {currentUser.role === 'coach' 
-                                ? `Lesson with ${booking.student?.name}`
-                                : `Lesson with ${booking.coach?.name}`
-                              }
+                              Lesson with {getLessonWithName(booking)}
                             </h3>
                             <Badge variant={getStatusColor(booking.status)}>
                               {booking.status}
                             </Badge>
+                            {(currentUser.role === 'coach' && booking.student?.id) && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="ml-2"
+                                onClick={() => handleOpenMessage(booking.student!)}
+                                data-testid={`button-message-${booking.id}`}
+                              >
+                                <MessageCircle className="w-4 h-4 mr-2" />
+                                Message
+                              </Button>
+                            )}
                           </div>
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-muted-foreground">
                             <div className="flex items-center gap-2">
@@ -423,6 +480,33 @@ export default function MyBookings() {
             )}
           </TabsContent>
         </Tabs>
+
+        {/* --- Message Modal (coach only) --- */}
+        {(currentUser.role === 'coach' && messageTo) && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+            <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
+              <h2 className="text-lg font-bold mb-2">Message {messageTo.name}</h2>
+              <textarea
+                className="w-full border rounded p-2 mb-2"
+                rows={4}
+                value={messageContent}
+                onChange={e => setMessageContent(e.target.value)}
+                placeholder="Type your message..."
+                disabled={sending}
+              />
+              {sendError && <div className="text-red-500 text-sm mb-2">{sendError}</div>}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={handleCloseMessage} disabled={sending}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSendMessage} loading={sending} disabled={sending || !messageContent.trim()}>
+                  Send
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );
