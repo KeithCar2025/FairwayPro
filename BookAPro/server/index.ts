@@ -29,12 +29,12 @@ app.use(
     secret: process.env.SESSION_SECRET || "dev-secret",
     resave: false,
     saveUninitialized: false,
-    cookie: {
-      maxAge: 24 * 60 * 60 * 1000,
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "none", // <--- must be none for cross-origin cookies
-    },
+cookie: {
+  maxAge: 24 * 60 * 60 * 1000, // 1 day
+  httpOnly: true,
+  secure: false, // ⚠️ must be false for localhost over HTTP
+  sameSite: "lax", // ✅ allows cookies between 3000 <-> 5000 in dev
+},
   })
 );
 
