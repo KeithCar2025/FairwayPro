@@ -9,6 +9,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { supabase } from "./supabase"; // your supabase client
 import passport from "passport";
 
+const PgSession = ConnectPgSimple(session);
 const app = express();
 
 // --- Essential Middleware ---
@@ -22,26 +23,20 @@ app.use(cors({
 }));
 
 // --- Session: Store sessions in Postgres ---
-const PgSession = ConnectPgSimple(session);
 app.use(
   session({
-    store: new PgSession({
-      pool: pool, // Use the shared PG pool!
-      tableName: "session",
-      createTableIfMissing: true,
-    }),
+    store: new PgSession({ pool, tableName: "session", createTableIfMissing: true }),
     secret: process.env.SESSION_SECRET || "dev-secret",
     resave: false,
     saveUninitialized: false,
     cookie: {
       maxAge: 24 * 60 * 60 * 1000,
-      secure: false, // ONLY true in production with HTTPS!
       httpOnly: true,
-      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "none", // <--- must be none for cross-origin cookies
     },
   })
 );
-
 
 app.use(passport.initialize());
 app.use(passport.session());
@@ -77,6 +72,12 @@ app.use((req, res, next) => {
 // --- Supabase JWT Middleware (optional, for API key auth) ---
 // If you only use session-based auth, you can remove this.
 // If you support both session and token auth, keep it!
+
+app.use((req, _res, next) => {
+  console.log("Session check:", req.session ? "exists" : "undefined");
+  next();
+});
+
 app.use(async (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) return next();

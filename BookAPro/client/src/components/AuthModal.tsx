@@ -6,14 +6,17 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Eye, EyeOff, Mail, Lock, User } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   // remove onAuth, we'll handle internally
 }
-
 export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
+  const { login, refreshUser } = useAuth(); 
+
   const [showPassword, setShowPassword] = useState(false);
   const [loginData, setLoginData] = useState({ email: "", password: "" });
   const [signupData, setSignupData] = useState({ 
@@ -24,28 +27,17 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   });
   const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include", // CRITICAL FOR SESSIONS
-        body: JSON.stringify(loginData),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        // Optionally: notify parent, close modal, update global auth state
-        onClose();
-        window.location.reload(); // or trigger your own "logged in" logic
-      } else {
-        setError(data.error || "Login failed");
-      }
-    } catch (err) {
-      setError("Login failed");
-    }
-  };
+ const handleLogin = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setError(null);
+
+  const success = await login(loginData.email, loginData.password);
+  if (success) {
+    onClose();
+  } else {
+    setError("Login failed. Check your email/password.");
+  }
+};
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();

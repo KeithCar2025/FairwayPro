@@ -1,18 +1,11 @@
 import { useState, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { Calendar, MessageCircle, User, LogOut, Edit, Mail } from "lucide-react";
-import { Link } from "wouter";
-
-interface User {
-  id: string;
-  email: string;
-  role: string;
-}
+import { Calendar, MessageCircle, Mail, LogOut, Edit } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface Student {
   id: string;
@@ -41,24 +34,20 @@ interface Booking {
   location: string;
   status: string;
   totalAmount: string;
-  coach?: {
-    name: string;
-    image?: string;
-  };
-  student?: {
-    id?: string; // <-- Make sure id is included
-    name: string;
-  };
+  coach?: { name: string; image?: string };
+  student?: { id?: string; name: string };
 }
 
 export default function Profile() {
   const [, setLocation] = useLocation();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { user: currentUser, logout } = useAuth();
+
+
   const [studentProfile, setStudentProfile] = useState<Student | null>(null);
   const [coachProfile, setCoachProfile] = useState<Coach | null>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Message modal state (coach only)
   const [messageTo, setMessageTo] = useState<{ id: string; name: string } | null>(null);
@@ -67,32 +56,25 @@ export default function Profile() {
   const [sendError, setSendError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadProfile();
-  }, []);
+    if (!currentUser) {
+      setIsLoading(false);
+      return;
+    }
+    loadProfileData();
+  }, [currentUser]);
 
-  const loadProfile = async () => {
+  const loadProfileData = async () => {
+    setIsLoading(true);
     try {
-      const authResponse = await fetch('/api/auth/me', {
-        credentials: 'include',
-      });
-      if (!authResponse.ok) {
-        setLocation('/');
-        return;
-      }
-      const authData = await authResponse.json();
-      setCurrentUser(authData.user);
-
-      // Load profile data based on role
-      if (authData.user.role === 'student') {
-        await loadStudentProfile(authData.user.id);
-      } else if (authData.user.role === 'coach') {
-        await loadCoachProfile(authData.user.id);
+      if (currentUser?.role === "student") {
+        await loadStudentProfile(currentUser.id);
+      } else if (currentUser?.role === "coach") {
+        await loadCoachProfile(currentUser.id);
       }
       await loadBookings();
       await loadUnreadMessagesCount();
-    } catch (error) {
-      console.error('Error loading profile:', error);
-      setLocation('/');
+    } catch (err) {
+      console.error("Error loading profile:", err);
     } finally {
       setIsLoading(false);
     }
@@ -100,90 +82,89 @@ export default function Profile() {
 
   const loadStudentProfile = async (userId: string) => {
     try {
-      const response = await fetch(`/api/students/profile/${userId}`, { credentials: 'include' });
-      if (response.ok) {
-        const data = await response.json();
+      const res = await fetch(`/api/students/profile/${userId}`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
         setStudentProfile(data.student);
       }
-    } catch (error) {
-      console.error('Error loading student profile:', error);
+    } catch (err) {
+      console.error("Error loading student profile:", err);
     }
   };
 
   const loadCoachProfile = async (userId: string) => {
     try {
-      const response = await fetch(`/api/coaches/profile/${userId}`, { credentials: 'include' });
-      if (response.ok) {
-        const data = await response.json();
+      const res = await fetch(`/api/coaches/profile/${userId}`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
         setCoachProfile(data.coach);
       }
-    } catch (error) {
-      console.error('Error loading coach profile:', error);
+    } catch (err) {
+      console.error("Error loading coach profile:", err);
     }
   };
 
   const loadBookings = async () => {
     try {
-      const response = await fetch('/api/bookings/my-bookings', { credentials: 'include' });
-      if (response.ok) {
-        const data = await response.json();
+      const res = await fetch("/api/bookings/my-bookings", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
         setBookings(data.bookings || []);
       }
-    } catch (error) {
-      console.error('Error loading bookings:', error);
+    } catch (err) {
+      console.error("Error loading bookings:", err);
     }
   };
 
   const loadUnreadMessagesCount = async () => {
     try {
-      const response = await fetch('/api/messages/unread-count', { credentials: 'include' });
-      if (response.ok) {
-        const data = await response.json();
+      const res = await fetch("/api/messages/unread-count", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
         setUnreadMessagesCount(data.count || 0);
       }
-    } catch (error) {
-      console.error('Error loading unread messages count:', error);
+    } catch (err) {
+      console.error("Error loading unread messages count:", err);
     }
   };
 
   const handleSignOut = async () => {
     try {
-      const response = await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-      if (response.ok) {
-        setLocation('/');
+      const res = await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+      if (res.ok) {
+        setLocation("/");
       }
-    } catch (error) {
-      console.error('Logout failed:', error);
+    } catch (err) {
+      console.error("Logout failed:", err);
     }
   };
 
   const handleEditProfile = () => {
-    if (currentUser?.role === "coach") {
-      setLocation("/coach/edit-profile");
-    } else if (currentUser?.role === "student") {
-      setLocation("/student/edit-profile");
-    }
+    if (currentUser?.role === "coach") setLocation("/coach/edit-profile");
+    else if (currentUser?.role === "student") setLocation("/student/edit-profile");
   };
 
   const getUserDisplayName = () => {
     if (studentProfile) return studentProfile.name;
     if (coachProfile) return coachProfile.name;
-    if (currentUser) return currentUser.email.split('@')[0];
-    return 'User';
+    if (currentUser) return currentUser.email.split("@")[0];
+    return "User";
   };
 
-  const getUserInitials = () => {
-    const name = getUserDisplayName();
-    return name.slice(0, 2).toUpperCase();
-  };
+  const getUserInitials = () => getUserDisplayName().slice(0, 2).toUpperCase();
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'confirmed': return 'default';
-      case 'pending': return 'secondary';
-      case 'completed': return 'outline';
-      case 'cancelled': return 'destructive';
-      default: return 'secondary';
+      case "confirmed":
+        return "default";
+      case "pending":
+        return "secondary";
+      case "completed":
+        return "outline";
+      case "cancelled":
+        return "destructive";
+      default:
+        return "secondary";
     }
   };
 
@@ -205,10 +186,7 @@ export default function Profile() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          receiverId: messageTo.id,
-          content: messageContent
-        })
+        body: JSON.stringify({ receiverId: messageTo.id, content: messageContent }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -224,18 +202,13 @@ export default function Profile() {
 
   if (isLoading) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="text-center">
-          <div className="animate-pulse">Loading...</div>
-        </div>
+      <div className="container mx-auto px-4 py-8 text-center">
+        <div className="animate-pulse">Loading...</div>
       </div>
     );
   }
 
-  if (!currentUser) {
-    return null;
-  }
-
+  if (!currentUser) return null;
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
       <div className="space-y-6">

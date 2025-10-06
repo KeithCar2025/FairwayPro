@@ -9,6 +9,7 @@ import { storage } from "./storage";
 import path from "path";
 import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
+import bcrypt from "bcrypt";
 import { z } from "zod";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -108,11 +109,12 @@ export function mapCoachToDB(coach: z.infer<typeof insertCoachSchema>) {
 export async function registerRoutes(app: Express): Promise<Server> {
   // --- CORS ---
 app.use(cors({
-  origin: [
-    "http://localhost:3000",
-    "http://localhost:5000",
-    process.env.FRONTEND_URL
-  ].filter(Boolean),
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    const allowed = ["http://localhost:3000", "http://localhost:5000"];
+    if (allowed.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
+  },
   credentials: true,
 }));
 
@@ -152,32 +154,26 @@ console.log("req.session at start of register:", req.session);
     res.status(400).json({ error: "Registration failed" });
   }
 });
-  app.post("/api/auth/login", async (req, res) => {
-    try {
-      const { email, password } = req.body;
-      if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+app.post("/api/auth/login", async (req, res) => {
+  const { email, password } = req.body;
 
-      const user = await storage.verifyPassword(email, password);
-      if (!user) return res.status(401).json({ error: "Invalid credentials" });
+  try {
+    const user = await storage.getUserByEmail(email);
+    if (!user) return res.status(401).json({ error: "Invalid email or password" });
 
-      req.session.regenerate((err) => {
-        if (err) {
-          console.error("Session regeneration failed:", err);
-          return res.status(500).json({ error: "Session error" }); // return!
-        }
-        if (req.session) {
-  req.session.userId = user.id;
-} else {
-  console.warn("req.session is undefined during registration");
-}
-        res.json({ user: { id: user.id, email: user.email, role: user.role } });
-      });
-    } catch (err) {
-      console.error("Login error:", err);
-      res.status(500).json({ error: "Login failed" });
-    }
-  });
+    // Compare password (make sure to hash in DB)
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: "Invalid email or password" });
 
+    // Save user ID in session
+    req.session.userId = user.id;
+
+    res.json({ user: { id: user.id, email: user.email, role: user.role } });
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ error: "Login failed" });
+  }
+});
   app.post("/api/auth/logout", (req, res) => {
     req.session.destroy((err) => {
       if (err) return res.status(500).json({ error: "Logout failed" });
@@ -186,20 +182,28 @@ console.log("req.session at start of register:", req.session);
     });
   });
 
-  app.get("/api/auth/me", async (req, res) => {
-    try {
-      const userId = (req.session as any)?.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+app.get("/api/auth/me", async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
-      const user = await storage.getUser(userId);
-      if (!user) return res.status(401).json({ error: "User not found" });
+    const { rows } = await pool.query(
+      `SELECT u.id, u.email, u.role, s.name
+       FROM users u
+       LEFT JOIN students s ON u.id = s.user_id
+       WHERE u.id = $1`,
+      [userId]
+    );
 
-      res.json({ user: { id: user.id, email: user.email, role: user.role } });
-    } catch (err) {
-      console.error("Auth check error:", err);
-      res.status(500).json({ error: "Authentication check failed" });
-    }
-  });
+    const user = rows[0];
+    if (!user) return res.status(401).json({ error: "User not found" });
+
+    res.json({ user });
+  } catch (err) {
+    console.error("Auth check error:", err);
+    res.status(500).json({ error: "Authentication check failed" });
+  }
+});
 
   // -----------------------------
   // ADMIN API ROUTES

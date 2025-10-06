@@ -17,6 +17,7 @@ import femaleCoachImage from "@assets/generated_images/Female_golf_coach_headsho
 import seniorCoachImage from "@assets/generated_images/Senior_golf_coach_headshot_d3798356.png";
 
 import { Switch, Route } from "wouter";
+import { AuthProvider } from "@/contexts/AuthContext"; 
 
 // Import all pages from client/src/pages/ as shown in ![image1](image1)
 import AdminDashboard from "@/pages/admin-dashboard";
@@ -60,6 +61,7 @@ const queryClient = new QueryClient();
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+	<AuthProvider> 
       <TooltipProvider>
         <Toaster />
         <Switch>
@@ -78,6 +80,7 @@ function App() {
         </Switch>
         <Footer />
       </TooltipProvider>
+	  </AuthProvider>
     </QueryClientProvider>
   );
 }
