@@ -11,6 +11,9 @@ import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import bcrypt from "bcrypt";
 import { z } from "zod";
+import messagesRouter from "./messages";
+import { isAuthenticated } from "./middleware/auth";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import express from "express";
@@ -51,12 +54,6 @@ pool.query("SELECT NOW()").then(res => {
   console.error("Pool connection FAIL!", err);
 });
 // --- Middleware helpers ---
-const isAuthenticated = (req: any, res: any, next: any) => {
-  if (!(req.session as any)?.userId) return res.status(401).json({ error: "Not authenticated" });
-  req.user = { id: (req.session as any).userId };
-  next();
-};
-
 const isAdmin = async (req: any, res: any, next: any) => {
   const userId = (req.session as any)?.userId;
 
@@ -105,8 +102,8 @@ export function mapCoachToDB(coach: z.infer<typeof insertCoachSchema>) {
     pga_certification_id: coach.pgaCertificationId || null,
   };
 }
-
 export async function registerRoutes(app: Express): Promise<Server> {
+
   // --- CORS ---
 app.use(cors({
   origin: function (origin, callback) {
@@ -119,6 +116,8 @@ app.use(cors({
 }));
 
 
+
+
   // --- Body parser ---
   app.use(express.json());
 
@@ -126,6 +125,7 @@ app.use('/api/auth', authGoogle);
   // -----------------------------
   // AUTH ROUTES
   // -----------------------------
+    app.use("/api/messages", messagesRouter);
 app.post("/api/auth/register", async (req, res) => {
 console.log("req.session at start of register:", req.session);
   try {

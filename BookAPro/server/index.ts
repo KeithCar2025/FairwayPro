@@ -9,12 +9,14 @@ import { setupVite, serveStatic, log } from "./vite";
 import { supabase } from "./supabase"; // your supabase client
 import passport from "passport";
 
+
 const PgSession = ConnectPgSimple(session);
 const app = express();
 
 // --- Essential Middleware ---
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
 
 // --- CORS: Allow frontend to send cookies for session auth ---
 app.use(cors({
@@ -40,7 +42,7 @@ cookie: {
 
 app.use(passport.initialize());
 app.use(passport.session());
-
+await registerRoutes(app);
 // --- Health Check Route ---
 app.get("/healthz", (_req, res) => res.send("OK"));
 
@@ -98,7 +100,7 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 (async () => {
   try {
     // --- Register all API and app routes ---
-    await registerRoutes(app);
+
 
     // --- Error Handling Middleware ---
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

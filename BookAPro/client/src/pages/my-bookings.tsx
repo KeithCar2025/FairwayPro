@@ -49,9 +49,49 @@ export default function MyBookings() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadBookings();
-  }, []);
+useEffect(() => {
+  const loadBookings = async () => {
+    try {
+      // 1. Check authentication
+      const authResponse = await fetch('/api/auth/me', { credentials: 'include' });
+      if (!authResponse.ok) {
+        setLocation('/');
+        return;
+      }
+      const authData = await authResponse.json();
+      setCurrentUser(authData.user);
+
+      // 2. Load bookings
+      const bookingsResponse = await fetch('/api/bookings/my-bookings', { credentials: 'include' });
+
+      if (bookingsResponse.ok) {
+        const bookingsData = await bookingsResponse.json();
+        const sanitizedBookings: Booking[] = (bookingsData.bookings || []).map((b: any) => ({
+          id: b.id,
+          date: b.date,
+          time: b.time,
+          duration: b.duration,
+          lessonType: b.lessonType,
+          location: b.location,
+          status: b.status,
+          totalAmount: b.totalAmount,
+          notes: b.notes || "",
+          coach: b.coach ? { id: b.coach.id, name: b.coach.name, image: b.coach.image } : undefined,
+          student: b.student ? { id: b.student.id, name: b.student.name } : undefined,
+        }));
+        setBookings(sanitizedBookings);
+      } else {
+        console.error("Failed to fetch bookings");
+      }
+    } catch (error) {
+      console.error('Error loading bookings:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  loadBookings();
+}, []);
 
   useEffect(() => {
     filterBookings();
@@ -192,10 +232,17 @@ export default function MyBookings() {
   const cancelledBookings = getCancelledBookings();
 
   // Helper: get display name for lesson (student for coach, coach for student)
-  const getLessonWithName = (booking: Booking) =>
-    currentUser.role === 'coach'
-      ? booking.student?.name || "Unknown Student"
-      : booking.coach?.name || "Unknown Coach";
+const getLessonWithName = (booking: Booking) => {
+  if (!currentUser) return "Unknown";
+
+  if (currentUser.role === 'coach') {
+    // fallback if student is missing
+    return booking.student?.name || "Unknown Student";
+  } else {
+    // fallback if coach is missing
+    return booking.coach?.name || "Unknown Coach";
+  }
+};
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl">
@@ -301,18 +348,19 @@ export default function MyBookings() {
                               {booking.status}
                             </Badge>
                             {/* Only show Message button if coach and student id exists */}
-                            {(currentUser.role === 'coach' && booking.student?.id) && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="ml-2"
-                                onClick={() => handleOpenMessage(booking.student!)}
-                                data-testid={`button-message-${booking.id}`}
-                              >
-                                <MessageCircle className="w-4 h-4 mr-2" />
-                                Message
-                              </Button>
-                            )}
+                {currentUser.role === 'coach' && booking.student && (
+  <Button
+    size="sm"
+    variant="outline"
+    className="ml-2"
+    onClick={() => booking.student?.id && handleOpenMessage(booking.student)}
+    disabled={!booking.student.id}
+    data-testid={`button-message-${booking.id}`}
+  >
+    <MessageCircle className="w-4 h-4 mr-2" />
+    Message
+  </Button>
+)}
                           </div>
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-muted-foreground">
                             <div className="flex items-center gap-2">
@@ -428,53 +476,66 @@ export default function MyBookings() {
             ) : (
               <div className="space-y-4">
                 {cancelledBookings.map((booking) => (
-                  <Card key={booking.id} className="opacity-75">
-                    <CardContent className="p-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <h3 className="font-semibold line-through">
-                              Lesson with {getLessonWithName(booking)}
-                            </h3>
-                            <Badge variant={getStatusColor(booking.status)}>
-                              {booking.status}
-                            </Badge>
-                            {(currentUser.role === 'coach' && booking.student?.id) && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="ml-2"
-                                onClick={() => handleOpenMessage(booking.student!)}
-                                data-testid={`button-message-${booking.id}`}
-                              >
-                                <MessageCircle className="w-4 h-4 mr-2" />
-                                Message
-                              </Button>
-                            )}
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-muted-foreground">
-                            <div className="flex items-center gap-2">
-                              <Calendar className="w-4 h-4" />
-                              {new Date(booking.date).toLocaleDateString()}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Clock className="w-4 h-4" />
-                              {booking.time} ({booking.duration} min)
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <MapPin className="w-4 h-4" />
-                              {booking.location}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-semibold line-through text-muted-foreground">
-                            ${booking.totalAmount}
-                          </p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
+<Card key={booking.id} className="hover-elevate">
+  <CardContent className="p-6">
+    <div className="flex items-start justify-between mb-4">
+      {/* Left side: Name + Badge */}
+      <div className="flex items-center gap-2">
+        <h3 className="font-semibold text-lg">
+          Lesson with {getLessonWithName(booking)}
+        </h3>
+        <Badge variant={getStatusColor(booking.status)}>
+          {booking.status}
+        </Badge>
+      </div>
+
+      {/* Right side: Message button */}
+      {currentUser.role === "coach" && booking.student?.id && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => handleOpenMessage(booking.student!)}
+          data-testid={`button-message-${booking.id}`}
+        >
+          <MessageCircle className="w-4 h-4 mr-2" />
+          Message
+        </Button>
+      )}
+    </div>
+
+    {/* Booking details */}
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-muted-foreground">
+      <div className="flex items-center gap-2">
+        <Calendar className="w-4 h-4" />
+        {new Date(booking.date).toLocaleDateString()}
+      </div>
+      <div className="flex items-center gap-2">
+        <Clock className="w-4 h-4" />
+        {booking.time} ({booking.duration} min)
+      </div>
+      <div className="flex items-center gap-2">
+        <MapPin className="w-4 h-4" />
+        {booking.location}
+      </div>
+    </div>
+
+    <div className="mt-2">
+      <Badge variant="outline">{booking.lessonType}</Badge>
+    </div>
+
+    {booking.notes && (
+      <p className="mt-3 text-sm text-muted-foreground">
+        <strong>Notes:</strong> {booking.notes}
+      </p>
+    )}
+
+    <div className="text-right mt-2">
+      <p className="font-semibold text-lg text-primary">
+        ${booking.totalAmount}
+      </p>
+    </div>
+  </CardContent>
+</Card>
                 ))}
               </div>
             )}
