@@ -1,0 +1,8 @@
+{
+  "schema": "./server/schema.ts",
+  "out": "./drizzle/migrations",
+  "dialect": "postgresql",
+  "dbCredentials": {
+    "connectionString": "postgresql://postgres:Easytr1p27.2025@jpnahkafypjpehpmruch.supabase.co:5432/postgres"
+  }
+}

@@ -3,12 +3,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Star, MapPin, Clock, DollarSign } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext"; 
+import { Star, MapPin, Clock } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 
 export interface Coach {
-  id: string;
-  userId: string; 
+  id: string;       // coaches.id
+  userId: string;   // users.id
   name: string;
   image?: string;
   rating: number;
@@ -44,23 +44,37 @@ interface CoachCardProps {
 
 export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachCardProps) {
   const [isHovered, setIsHovered] = useState(false);
-    const { user } = useAuth();
+  const { user, openAuthModal } = useAuth();
 
   const renderStars = (rating: number) => {
     return Array.from({ length: 5 }, (_, i) => (
       <Star
         key={i}
         className={`w-4 h-4 ${
-          i < Math.floor(rating) 
-            ? 'text-yellow-400 fill-current' 
-            : 'text-gray-300'
+          i < Math.floor(rating) ? 'text-yellow-400 fill-current' : 'text-gray-300'
         }`}
       />
     ));
   };
 
+  const handleBookClick = (e: React.MouseEvent) => {
+    // Prevent card click bubbling (which opens profile)
+    e.stopPropagation();
+
+    if (user) {
+      // Logged in -> continue booking flow
+      onBookLesson(coach);
+    } else {
+      // Not logged in -> open the auth modal and attach a pending action so the app can continue after login
+      openAuthModal({
+        initialTab: "login",
+        pendingAction: { type: "book", coachId: coach.id }
+      });
+    }
+  };
+
   return (
-    <Card 
+    <Card
       className="hover-elevate cursor-pointer transition-all duration-200"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -94,7 +108,7 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
                       {coach.rating} ({coach.reviewCount} platform reviews)
                     </span>
                   </div>
-                  
+
                   {/* Google Reviews Rating */}
                   {coach.googleRating && coach.googleReviewCount && (
                     <div className="flex items-center gap-2">
@@ -108,12 +122,11 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
                   )}
                 </div>
               </div>
-              
-              <div className="text-right">
-<div className="text-2xl font-bold text-primary" data-testid={`text-price-${coach.id}`}>
-  ${coach.pricePerHour}
-</div>
 
+              <div className="text-right">
+                <div className="text-2xl font-bold text-primary" data-testid={`text-price-${coach.id}`}>
+                  ${coach.pricePerHour}
+                </div>
                 <div className="text-sm text-muted-foreground">per hour</div>
               </div>
             </div>
@@ -177,9 +190,9 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
 
             {/* Actions */}
             <div className="flex gap-2">
-              <Button 
-                variant="outline" 
-                size="sm" 
+              <Button
+                variant="outline"
+                size="sm"
                 className="flex-1"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -189,32 +202,17 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
               >
                 View Profile
               </Button>
-			  
-			  
-           {/* ✅ Require login to book */}
-              {user ? (
-                <Button
-                  size="sm"
-                  className="flex-1"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onBookLesson(coach);
-                  }}
-                  data-testid={`button-book-lesson-${coach.id}`}
-                >
-                  Book Lesson
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  className="flex-1"
-                  variant="secondary"
-                  disabled
-                  data-testid={`button-signin-required-${coach.id}`}
-                >
-                  Sign in to Book
-                </Button>
-              )}
+
+              <Button
+                size="sm"
+                className="flex-1"
+                variant={user ? "default" : "secondary"}
+                onClick={handleBookClick}
+                data-testid={`button-book-lesson-${coach.id}`}
+                aria-label={user ? `Book lesson with ${coach.name}` : "Sign in to book lesson"}
+              >
+                {user ? "Book Lesson" : "Sign in to Book"}
+              </Button>
             </div>
           </div>
         </div>

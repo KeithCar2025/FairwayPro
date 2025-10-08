@@ -22,6 +22,11 @@ interface Coach {
   user_id: string;
 }
 
+type PendingAction =
+  | null
+  | { type: "book"; coachId: string }
+  | { type: "openTab"; tab: "login" | "signup" };
+
 interface AuthContextType {
   user: User | null;
   student: Student | null;
@@ -29,6 +34,12 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  // Modal / cross-app auth helpers
+  isAuthModalOpen: boolean;
+  openAuthModal: (opts?: { initialTab?: "login" | "signup"; pendingAction?: PendingAction }) => void;
+  closeAuthModal: () => void;
+  pendingAction: PendingAction;
+  setPendingAction: (p: PendingAction) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -37,6 +48,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [student, setStudent] = useState<Student | null>(null);
   const [coach, setCoach] = useState<Coach | null>(null);
+
+  // modal + pending action state
+  const [isAuthModalOpen, setAuthModalOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  // optional: store initial tab for modal (login/signup)
+  const [initialAuthTab, setInitialAuthTab] = useState<"login" | "signup">("login");
 
   const refreshUser = async () => {
     try {
@@ -51,8 +68,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const data = await res.json();
       setUser(data.user);
 
+      // reset student/coach
+      setStudent(null);
+      setCoach(null);
+
       // If user is a student, fetch student profile
-      if (data.user.role === "student") {
+      if (data.user?.role === "student") {
         const studentRes = await fetch("/api/students/me", { credentials: "include" });
         if (studentRes.ok) {
           const studentData = await studentRes.json();
@@ -61,14 +82,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
 
       // If user is a coach, fetch coach profile
-      if (data.user.role === "coach") {
+      if (data.user?.role === "coach") {
         const coachRes = await fetch("/api/coaches/me", { credentials: "include" });
         if (coachRes.ok) {
           const coachData = await coachRes.json();
           setCoach(coachData);
         }
       }
-
     } catch (err) {
       console.error("Error refreshing user:", err);
       setUser(null);
@@ -87,9 +107,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
 
       if (!res.ok) return false;
-      const data = await res.json();
-      setUser(data.user);
-      await refreshUser(); // load student/coach profile
+      await refreshUser();
+      // close modal on success and keep pendingAction for consumer to handle
+      setAuthModalOpen(false);
       return true;
     } catch {
       return false;
@@ -104,14 +124,39 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
     setStudent(null);
     setCoach(null);
+    setPendingAction(null);
   };
 
   useEffect(() => {
     refreshUser();
   }, []);
 
+  const openAuthModal = (opts?: { initialTab?: "login" | "signup"; pendingAction?: PendingAction }) => {
+    if (opts?.initialTab) setInitialAuthTab(opts.initialTab);
+    if (opts?.pendingAction) setPendingAction(opts.pendingAction);
+    setAuthModalOpen(true);
+  };
+
+  const closeAuthModal = () => {
+    setAuthModalOpen(false);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, student, coach, login, logout, refreshUser }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        student,
+        coach,
+        login,
+        logout,
+        refreshUser,
+        isAuthModalOpen,
+        openAuthModal,
+        closeAuthModal,
+        pendingAction,
+        setPendingAction,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

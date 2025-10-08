@@ -6,10 +6,8 @@ import ConnectPgSimple from "connect-pg-simple";
 import { pool } from "./db"; // Make sure pool is the shared PG pool!
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { supabase } from "./supabase"; // your supabase client
+import { supabase } from "./supabaseClient"; // ensure this matches your client filename
 import passport from "passport";
-import messagesRouter from "./routes/messages.js";
-
 
 const PgSession = ConnectPgSimple(session);
 const app = express();
@@ -17,7 +15,6 @@ const app = express();
 // --- Essential Middleware ---
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-
 
 // --- CORS: Allow frontend to send cookies for session auth ---
 app.use(cors({
@@ -32,21 +29,22 @@ app.use(
     secret: process.env.SESSION_SECRET || "dev-secret",
     resave: false,
     saveUninitialized: false,
-cookie: {
-  maxAge: 24 * 60 * 60 * 1000, // 1 day
-  httpOnly: true,
-  secure: false, // ⚠️ must be false for localhost over HTTP
-  sameSite: "lax", // ✅ allows cookies between 3000 <-> 5000 in dev
-},
+    cookie: {
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      httpOnly: true,
+      secure: false, // ⚠️ must be false for localhost over HTTP
+      sameSite: "lax", // ✅ allows cookies between 3000 <-> 5000 in dev
+    },
   })
 );
 
 app.use(passport.initialize());
 app.use(passport.session());
+
+// registerRoutes mounts all application routes (auth, admin, coaches, messaging, etc.)
 await registerRoutes(app);
 
 // --- Health Check Route ---
-app.use("/api/messages", messagesRouter);
 app.get("/healthz", (_req, res) => res.send("OK"));
 
 // --- Logging Middleware ---
@@ -102,9 +100,6 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 
 (async () => {
   try {
-    // --- Register all API and app routes ---
-
-
     // --- Error Handling Middleware ---
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
       console.error(err);

@@ -1,5 +1,4 @@
 import type { Express } from "express";
-import { pool } from './db';
 import { v4 as uuidv4 } from "uuid";
 import { supabase } from "./supabaseClient";
 import { createServer, type Server } from "http";
@@ -11,17 +10,20 @@ import { fileURLToPath } from "url";
 import { randomUUID } from "crypto";
 import bcrypt from "bcrypt";
 import { z } from "zod";
-import messagesRouter from "./messages";
 import { isAuthenticated } from "./middleware/auth";
+import { pool } from "./db";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
 import express from "express";
 import fs from "fs";
 import CoachEditProfile from "@/components/CoachEditProfile";
-import cors from "cors";import multer from "multer";
+import cors from "cors";
+import multer from "multer";
 const upload = multer();
 const { mapCoachDbToApi } = require('./utils/coach-mappers');
+
 import {
   insertUserSchema,
   insertCoachSchema,
@@ -47,12 +49,13 @@ import {
 } from "./controllers/googleCalendarController.js";
 import { createGoogleEvent } from "./services/googleCalendarService.js";
 import authGoogle from './auth/authGoogle.js';
-import { pool } from "./db";
+
 pool.query("SELECT NOW()").then(res => {
   console.log("Pool connection OK!", res.rows[0]);
 }).catch(err => {
   console.error("Pool connection FAIL!", err);
 });
+
 // --- Middleware helpers ---
 const isAdmin = async (req: any, res: any, next: any) => {
   const userId = (req.session as any)?.userId;
@@ -102,78 +105,79 @@ export function mapCoachToDB(coach: z.infer<typeof insertCoachSchema>) {
     pga_certification_id: coach.pgaCertificationId || null,
   };
 }
+
 export async function registerRoutes(app: Express): Promise<Server> {
 
   // --- CORS ---
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    const allowed = ["http://localhost:3000", "http://localhost:5000"];
-    if (allowed.includes(origin)) return callback(null, true);
-    return callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-}));
-
-
-
+  app.use(cors({
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      const allowed = ["http://localhost:3000", "http://localhost:5000"];
+      if (allowed.includes(origin)) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  }));
 
   // --- Body parser ---
   app.use(express.json());
 
-app.use('/api/auth', authGoogle);
+  // Auth Google router
+  app.use('/api/auth', authGoogle);
+
   // -----------------------------
   // AUTH ROUTES
   // -----------------------------
-    app.use("/api/messages", messagesRouter);
-app.post("/api/auth/register", async (req, res) => {
-console.log("req.session at start of register:", req.session);
-  try {
-    const { email, password, name } = req.body;
-    if (!email || !password) return res.status(400).json({ error: "Email and password required" });
 
-    const existingUser = await storage.getUserByEmail(email);
-    if (existingUser) return res.status(400).json({ error: "User already exists" });
+  app.post("/api/auth/register", async (req, res) => {
+    console.log("req.session at start of register:", req.session);
+    try {
+      const { email, password, name } = req.body;
+      if (!email || !password) return res.status(400).json({ error: "Email and password required" });
 
-    const user = await storage.createUser({ email, password, role: "student" }); // Make sure this sets auth_provider
-    (req.session).userId = user.id;
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) return res.status(400).json({ error: "User already exists" });
 
-    await storage.createStudent({
-      id: uuidv4(),
-      user_id: user.id,
-      name: name || "",
-      phone: "",
-      skill_level: "",
-      preferences: ""
-    });
+      const user = await storage.createUser({ email, password, role: "student" }); // Make sure this sets auth_provider
+      (req.session as any).userId = user.id;
 
-    res.json({ user: { id: user.id, email: user.email, role: user.role } });
-  } catch (err) {
-    // PRINT THE FULL ERROR OBJECT
-    console.error("Registration error:", err, err?.message, err?.details);
-    res.status(400).json({ error: "Registration failed" });
-  }
-});
-app.post("/api/auth/login", async (req, res) => {
-  const { email, password } = req.body;
+      await storage.createStudent({
+        id: uuidv4(),
+        user_id: user.id,
+        name: name || "",
+        phone: "",
+        skill_level: "",
+        preferences: ""
+      });
 
-  try {
-    const user = await storage.getUserByEmail(email);
-    if (!user) return res.status(401).json({ error: "Invalid email or password" });
+      res.json({ user: { id: user.id, email: user.email, role: user.role } });
+    } catch (err) {
+      console.error("Registration error:", err, err?.message, err?.details);
+      res.status(400).json({ error: "Registration failed" });
+    }
+  });
 
-    // Compare password (make sure to hash in DB)
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ error: "Invalid email or password" });
+  app.post("/api/auth/login", async (req, res) => {
+    const { email, password } = req.body;
 
-    // Save user ID in session
-    req.session.userId = user.id;
+    try {
+      const user = await storage.getUserByEmail(email);
+      if (!user) return res.status(401).json({ error: "Invalid email or password" });
 
-    res.json({ user: { id: user.id, email: user.email, role: user.role } });
-  } catch (err) {
-    console.error("Login error:", err);
-    res.status(500).json({ error: "Login failed" });
-  }
-});
+      // Compare password (make sure to hash in DB)
+      const valid = await bcrypt.compare(password, user.password_hash);
+      if (!valid) return res.status(401).json({ error: "Invalid email or password" });
+
+      // Save user ID in session
+      (req.session as any).userId = user.id;
+
+      res.json({ user: { id: user.id, email: user.email, role: user.role } });
+    } catch (err) {
+      console.error("Login error:", err);
+      res.status(500).json({ error: "Login failed" });
+    }
+  });
+
   app.post("/api/auth/logout", (req, res) => {
     req.session.destroy((err) => {
       if (err) return res.status(500).json({ error: "Logout failed" });
@@ -182,28 +186,28 @@ app.post("/api/auth/login", async (req, res) => {
     });
   });
 
-app.get("/api/auth/me", async (req, res) => {
-  try {
-    const userId = req.session.userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+  app.get("/api/auth/me", async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
-    const { rows } = await pool.query(
-      `SELECT u.id, u.email, u.role, s.name
-       FROM users u
-       LEFT JOIN students s ON u.id = s.user_id
-       WHERE u.id = $1`,
-      [userId]
-    );
+      const { rows } = await pool.query(
+        `SELECT u.id, u.email, u.role, s.name
+         FROM users u
+         LEFT JOIN students s ON u.id = s.user_id
+         WHERE u.id = $1`,
+        [userId]
+      );
 
-    const user = rows[0];
-    if (!user) return res.status(401).json({ error: "User not found" });
+      const user = rows[0];
+      if (!user) return res.status(401).json({ error: "User not found" });
 
-    res.json({ user });
-  } catch (err) {
-    console.error("Auth check error:", err);
-    res.status(500).json({ error: "Authentication check failed" });
-  }
-});
+      res.json({ user });
+    } catch (err) {
+      console.error("Auth check error:", err);
+      res.status(500).json({ error: "Authentication check failed" });
+    }
+  });
 
   // -----------------------------
   // ADMIN API ROUTES
@@ -225,15 +229,16 @@ app.get("/api/auth/me", async (req, res) => {
   });
 
   app.get("/api/admin/pending-coaches", isAdmin, async (_req, res) => res.json(await storage.getPendingCoaches()));
-app.post("/api/admin/approve-coach/:id", isAdmin, async (req, res) => {
-  try {
-    const coach = await storage.approveCoach(req.params.id, req.user?.id);
-    res.json({ success: true, coach });
-  } catch (error) {
-    console.error("Approve coach error:", error);
-    res.status(500).json({ error: "Failed to approve coach", details: error.message });
-  }
-});
+
+  app.post("/api/admin/approve-coach/:id", isAdmin, async (req, res) => {
+    try {
+      const coach = await storage.approveCoach(req.params.id, req.user?.id);
+      res.json({ success: true, coach });
+    } catch (error: any) {
+      console.error("Approve coach error:", error);
+      res.status(500).json({ error: "Failed to approve coach", details: error.message });
+    }
+  });
 
   app.post("/api/admin/reject-coach/:id", isAdmin, async (req, res) => {
     try {
@@ -244,6 +249,7 @@ app.post("/api/admin/approve-coach/:id", isAdmin, async (req, res) => {
       res.status(500).json({ error: "Failed to reject coach" });
     }
   });
+
   app.get("/api/admin/bookings", isAdmin, async (_req, res) => res.json(await storage.getAllBookings()));
   app.get("/api/admin/coaches", isAdmin, async (_req, res) => res.json(await storage.getAllCoaches()));
   app.delete("/api/admin/coaches/:id", isAdmin, async (req, res) => { await storage.deleteCoach(req.params.id, req.user.id); res.json({ success: true }); });
@@ -252,8 +258,6 @@ app.post("/api/admin/approve-coach/:id", isAdmin, async (req, res) => {
   app.post("/api/admin/send-coach-signup", isAdmin, async (req, res) => { await storage.sendCoachSignupInvite(req.body.email, req.body.message, req.user.id); res.json({ success: true }); });
   app.get("/api/admin/actions", isAdmin, async (_req, res) => res.json(await storage.getAdminActions()));
   app.get("/api/admin/dashboard", isAdmin, async (req, res) => res.json({ message: "Welcome Admin!", userId: req.user.id }));
-
-
 
   // -----------------------------
   // COACH ROUTES
@@ -311,46 +315,48 @@ app.post("/api/admin/approve-coach/:id", isAdmin, async (req, res) => {
       res.status(400).json({ error: "Coach registration failed", details: err.errors ?? err });
     }
   });
-app.get("/api/coaches/me", async (req, res) => {
-  const userId = (req.session as any)?.userId; // THIS SHOULD BE THE USER ID STRING
-  console.log("DEBUG /api/coaches/me userId from session:", userId);
 
-  try {
-    const coach = await storage.getCoachWithDetailsByUserId(userId);
-    if (!coach) return res.status(404).json({ error: "Coach not found" });
-    res.json(coach);
-  } catch (error) {
-    console.error("Get coach by userId error:", error);
-    res.status(500).json({ error: "Failed to fetch coach profile", details: error.message });
-  }
-});
-app.get('/api/coaches', async (req, res) => {
-  try {
-    const coaches = await storage.getApprovedCoaches();
+  app.get("/api/coaches/me", async (req, res) => {
+    const userId = (req.session as any)?.userId;
+    console.log("DEBUG /api/coaches/me userId from session:", userId);
 
-    res.json(coaches);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch coaches' });
-  }
-});
-app.put("/api/coaches/me", async (req, res) => {
-  const userId = (req.session as any)?.userId;
-  if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const coach = await storage.getCoachWithDetailsByUserId(userId);
+      if (!coach) return res.status(404).json({ error: "Coach not found" });
+      res.json(coach);
+    } catch (error: any) {
+      console.error("Get coach by userId error:", error);
+      res.status(500).json({ error: "Failed to fetch coach profile", details: error.message });
+    }
+  });
 
-  try {
-    console.log("PUT /api/coaches/me body:", req.body); // <--- LOG THIS
-    await storage.updateCoachProfileFull(userId, req.body);
-    res.json({ message: "Profile updated" });
-  } catch (error) {
-    console.error("Update coach profile error:", error);
-    res.status(400).json({ error: "Failed to update coach profile", details: (error as any).message });
-  }
-});
+  app.get('/api/coaches', async (req, res) => {
+    try {
+      const coaches = await storage.getApprovedCoaches();
+      res.json(coaches);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Failed to fetch coaches' });
+    }
+  });
+
+  app.put("/api/coaches/me", async (req, res) => {
+    const userId = (req.session as any)?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+    try {
+      console.log("PUT /api/coaches/me body:", req.body);
+      await storage.updateCoachProfileFull(userId, req.body);
+      res.json({ message: "Profile updated" });
+    } catch (error: any) {
+      console.error("Update coach profile error:", error);
+      res.status(400).json({ error: "Failed to update coach profile", details: error.message });
+    }
+  });
+
   app.get("/api/coaches/:id", async (req, res) => {
     try {
       const coach = await storage.getCoachWithDetailsByUserId(req.params.id);
-	  const apiCoaches = coaches.map(mapCoachDbToApi);
       if (!coach) return res.status(404).json({ error: "Coach not found" });
       res.json(coach);
     } catch (error) {
@@ -358,8 +364,6 @@ app.put("/api/coaches/me", async (req, res) => {
       res.status(500).json({ error: "Failed to fetch coach" });
     }
   });
-
-
 
   app.put("/api/coaches/:id", async (req, res) => {
     try {
@@ -392,50 +396,51 @@ app.put("/api/coaches/me", async (req, res) => {
       res.status(500).json({ error: "Coach search failed" });
     }
   });
-app.get("/api/google/auth", isAuthenticated, authRedirect);
-app.get("/api/google/callback", isAuthenticated, oauthCallback);
-app.get("/api/google/events", isAuthenticated, getEvents);
-app.post("/api/google/events", isAuthenticated, async (req, res) => {
-  try {
-    const { coachUserId, summary, description, start, end } = req.body;
-    if (!coachUserId || !summary || !description || !start || !end) {
-      return res.status(400).json({
-        error: "Missing required fields: coachUserId, summary, description, start, end are all required.",
-        received: req.body
+
+  app.get("/api/google/auth", isAuthenticated, authRedirect);
+  app.get("/api/google/callback", isAuthenticated, oauthCallback);
+  app.get("/api/google/events", isAuthenticated, getEvents);
+
+  app.post("/api/google/events", isAuthenticated, async (req, res) => {
+    try {
+      const { coachUserId, summary, description, start, end } = req.body;
+      if (!coachUserId || !summary || !description || !start || !end) {
+        return res.status(400).json({
+          error: "Missing required fields: coachUserId, summary, description, start, end are all required.",
+          received: req.body
+        });
+      }
+      const coach = await storage.getCoachByUserId(coachUserId);
+      if (!coach) {
+        return res.status(403).json({ error: "Coach not found or not authorized." });
+      }
+      const calendarSettings = await storage.getCoachCalendarSettings(coach.id);
+      if (!calendarSettings?.googleRefreshToken) {
+        return res.status(400).json({ error: "Coach has not connected Google Calendar." });
+      }
+
+      const event = await createGoogleEvent(coach.id, {
+        summary,
+        description,
+        start: new Date(start).toISOString(),
+        end: new Date(end).toISOString()
+      });
+
+      res.json({ success: true, event });
+
+    } catch (error: any) {
+      console.error("Error in /api/google/events:", error);
+      if (error.response?.data) {
+        console.error("Google API error details:", error.response.data);
+      }
+      res.status(400).json({
+        error: error.message,
+        details: error.stack,
+        google: error.response?.data
       });
     }
-    const coach = await storage.getCoachByUserId(coachUserId);
-    if (!coach) {
-      return res.status(403).json({ error: "Coach not found or not authorized." });
-    }
-    // Use coach.id for calendar settings and event creation
-    const calendarSettings = await storage.getCoachCalendarSettings(coach.id);
-    if (!calendarSettings?.googleRefreshToken) {
-      return res.status(400).json({ error: "Coach has not connected Google Calendar." });
-    }
+  });
 
-    // --- THIS IS THE CRITICAL FIX ---
-    const event = await createGoogleEvent(coach.id, {
-      summary,
-      description,
-      start: new Date(start).toISOString(),
-      end: new Date(end).toISOString()
-    });
-
-    res.json({ success: true, event });
-
-  } catch (error) {
-    console.error("Error in /api/google/events:", error);
-    if (error.response?.data) {
-      console.error("Google API error details:", error.response.data);
-    }
-    res.status(400).json({
-      error: error.message,
-      details: error.stack,
-      google: error.response?.data
-    });
-  }
-});
   // --- Google Reviews ---
   app.post("/api/coaches/fetch-google-reviews", async (req, res) => {
     try {
@@ -485,64 +490,57 @@ app.post("/api/google/events", isAuthenticated, async (req, res) => {
       res.status(500).json({ error: "Failed to sync Google Reviews" });
     }
   });
-app.get("/api/coaches/:id/available-times", async (req, res) => {
-  try {
-    const { id: coachId } = req.params;
-    const { date } = req.query; // Expecting YYYY-MM-DD
 
-    if (!coachId || !date) {
-      return res.status(400).json({ error: "coachId and date are required" });
-    }
-
-    // Example: generate candidate slots (adjust as needed)
-    const defaultSlots = [
-      "9:00 AM", "10:00 AM", "11:00 AM", "1:00 PM",
-      "2:00 PM", "3:00 PM", "4:00 PM"
-    ];
-
-    // --- Fetch Google Calendar Events for the day ---
-    // You should implement this utility function
-    const { fetchGoogleEvents } = await import("./services/googleCalendarService.js");
-    let busyTimes: { start: string, end: string }[] = [];
+  app.get("/api/coaches/:id/available-times", async (req, res) => {
     try {
-      const events = await fetchGoogleEvents(coachId);
-      // Filter events for this date
-      busyTimes = events
-        .filter(event => {
-          // event.start.dateTime and event.end.dateTime are ISO strings
-          return event.start?.dateTime && event.end?.dateTime &&
-            event.start.dateTime.startsWith(date); // crude check, works for single-day events
-        })
-        .map(event => ({
-          start: event.start.dateTime,
-          end: event.end.dateTime
-        }));
-    } catch (err) {
-      console.error("Error fetching Google events:", err);
-      // Optionally, return all slots if calendar is not connected
+      const { id: coachId } = req.params;
+      const { date } = req.query; // Expecting YYYY-MM-DD
+
+      if (!coachId || !date) {
+        return res.status(400).json({ error: "coachId and date are required" });
+      }
+
+      const defaultSlots = [
+        "9:00 AM", "10:00 AM", "11:00 AM", "1:00 PM",
+        "2:00 PM", "3:00 PM", "4:00 PM"
+      ];
+
+      const { fetchGoogleEvents } = await import("./services/googleCalendarService.js");
+      let busyTimes: { start: string, end: string }[] = [];
+      try {
+        const events = await fetchGoogleEvents(coachId);
+        busyTimes = events
+          .filter(event => {
+            return event.start?.dateTime && event.end?.dateTime &&
+              event.start.dateTime.startsWith(date);
+          })
+          .map(event => ({
+            start: event.start.dateTime,
+            end: event.end.dateTime
+          }));
+      } catch (err) {
+        console.error("Error fetching Google events:", err);
+      }
+
+      function isSlotAvailable(slotTime: string) {
+        const slotStart = new Date(`${date} ${slotTime}`);
+        const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
+        return !busyTimes.some(({ start, end }) => {
+          const busyStart = new Date(start);
+          const busyEnd = new Date(end);
+          return slotStart < busyEnd && slotEnd > busyStart;
+        });
+      }
+
+      const available = defaultSlots.filter(isSlotAvailable);
+
+      res.json({ times: available });
+    } catch (error) {
+      console.error("Available times error:", error);
+      res.status(500).json({ error: "Failed to fetch available times" });
     }
+  });
 
-    // Utility to check for overlap; you may want to make this time-zone aware
-    function isSlotAvailable(slotTime: string) {
-      // Convert slotTime (e.g., '9:00 AM') to a Date on the target day
-      const slotStart = new Date(`${date} ${slotTime}`);
-      const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000); // 1hr slot
-      return !busyTimes.some(({ start, end }) => {
-        const busyStart = new Date(start);
-        const busyEnd = new Date(end);
-        return slotStart < busyEnd && slotEnd > busyStart;
-      });
-    }
-
-    // Filter out busy slots
-    const available = defaultSlots.filter(isSlotAvailable);
-
-    res.json({ times: available });
-  } catch (error) {
-    console.error("Available times error:", error);
-    res.status(500).json({ error: "Failed to fetch available times" });
-  }
-});
   // -----------------------------
   // STUDENT ROUTES
   // -----------------------------
@@ -573,70 +571,68 @@ app.get("/api/coaches/:id/available-times", async (req, res) => {
   // -----------------------------
   // BOOKING ROUTES
   // -----------------------------
-app.post("/api/bookings", async (req, res) => {
-  try {
-    const userId = (req.session as any)?.userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+  app.post("/api/bookings", async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
-    const student = await storage.getStudentByUserId(userId);
-    if (!student) return res.status(400).json({ error: "Student profile required for booking" });
+      const student = await storage.getStudentByUserId(userId);
+      if (!student) return res.status(400).json({ error: "Student profile required for booking" });
 
-    // Map frontend fields to DB columns
-    const reqBody = {
-      ...req.body,
-	  id: uuidv4(),
-	  lesson_type: req.body.lesson_type ?? req.body.lessonType,
-      student_id: student.id,
-      coach_id: req.body.coachId,                  // <-- map correctly
-      date: req.body.date ? new Date(req.body.date) : undefined,
-      duration: req.body.duration ? Number(req.body.duration) : undefined,
-      total_amount: req.body.totalAmount ? Number(req.body.totalAmount) : undefined, // <-- map and convert
-    };
+      const reqBody = {
+        ...req.body,
+        id: uuidv4(),
+        lesson_type: req.body.lesson_type ?? req.body.lessonType,
+        student_id: student.id,
+        coach_id: req.body.coachId,
+        date: req.body.date ? new Date(req.body.date) : undefined,
+        duration: req.body.duration ? Number(req.body.duration) : undefined,
+        total_amount: req.body.totalAmount ? Number(req.body.totalAmount) : undefined,
+      };
 
-    // Optionally delete camelCase props to avoid confusion
-    delete reqBody.coachId;
-    delete reqBody.studentId;
-    delete reqBody.totalAmount;
+      delete reqBody.coachId;
+      delete reqBody.studentId;
+      delete reqBody.totalAmount;
 
-    const booking = await storage.createBooking(insertBookingSchema.parse(reqBody));
-    res.json(booking);
-  } catch (error) {
-    console.error("Booking creation error:", error);
-    res.status(400).json({ error: "Failed to create booking" });
-  }
-});
+      const booking = await storage.createBooking(insertBookingSchema.parse(reqBody));
+      res.json(booking);
+    } catch (error) {
+      console.error("Booking creation error:", error);
+      res.status(400).json({ error: "Failed to create booking" });
+    }
+  });
 
   app.get("/api/bookings/my-bookings", isAuthenticated, async (req, res) => {
-  try {
-    const userId = (req.session as any)?.userId;
-    const user = await storage.getUser(userId);
-    if (!user) return res.status(401).json({ error: "User not found" });
+    try {
+      const userId = (req.session as any).userId;
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(401).json({ error: "User not found" });
 
-    let bookings: any[] = [];
-    if (user.role === 'student') {
-      const student = await storage.getStudentByUserId(userId);
-      if (student) bookings = await storage.getBookingsByStudent(student.id);
-    } else if (user.role === 'coach') {
-      const coach = await storage.getCoachByUserId(userId); // <--- FIXED
-      if (coach) bookings = await storage.getBookingsByCoach(coach.id);
+      let bookings: any[] = [];
+      if (user.role === 'student') {
+        const student = await storage.getStudentByUserId(userId);
+        if (student) bookings = await storage.getBookingsByStudent(student.id);
+      } else if (user.role === 'coach') {
+        const coach = await storage.getCoachByUserId(userId);
+        if (coach) bookings = await storage.getBookingsByCoach(coach.id);
+      }
+
+      const enriched = await Promise.all(bookings.map(async b => {
+        const coach = await storage.getCoach(b.coach_id);
+        const student = await storage.getStudent(b.student_id);
+        return {
+          ...b,
+          coach: coach ? { id: coach.id, name: coach.name, image: coach.image } : null,
+          student: student ? { id: student.id, email: student.email, name: student.name } : null
+        };
+      }));
+
+      res.json({ bookings: enriched });
+    } catch (error) {
+      console.error("Error fetching bookings:", error);
+      res.status(500).json({ error: "Failed to fetch bookings" });
     }
-
-const enriched = await Promise.all(bookings.map(async b => {
-  const coach = await storage.getCoach(b.coach_id);
-  const student = await storage.getStudent(b.student_id);
-  return {
-    ...b,
-    coach: coach ? { id: coach.id, name: coach.name, image: coach.image } : null,
-    student: student ? { id: student.id, email: student.email, name: student.name } : null
-  };
-}));
-
-    res.json({ bookings: enriched });
-  } catch (error) {
-    console.error("Error fetching bookings:", error);
-    res.status(500).json({ error: "Failed to fetch bookings" });
-  }
-});
+  });
 
   // -----------------------------
   // REVIEW ROUTES
@@ -669,7 +665,7 @@ const enriched = await Promise.all(bookings.map(async b => {
   // OBJECT STORAGE ROUTES
   // -----------------------------
   app.get("/objects/:objectPath(*)", async (req, res) => {
-    const userId = (req.session as any)?.userId;
+    const userId = (req.session as any).userId;
     const service = new ObjectStorageService();
     try {
       const objectFile = await service.getObjectEntityFile(req.path);
@@ -683,128 +679,125 @@ const enriched = await Promise.all(bookings.map(async b => {
     }
   });
 
-app.post("/api/objects/upload", isAuthenticated, async (req, res) => {
-  try {
-    const { filename, contentType } = req.body;
-    if (!filename || !contentType) {
-      return res.status(400).json({ error: "filename and contentType required" });
+  app.post("/api/objects/upload", isAuthenticated, async (req, res) => {
+    try {
+      const { filename, contentType } = req.body;
+      if (!filename || !contentType) {
+        return res.status(400).json({ error: "filename and contentType required" });
+      }
+
+      const { data, error } = await supabase.storage
+        .from("profile-images")
+        .createSignedUploadUrl(filename, { contentType });
+
+      if (error) throw error;
+
+      res.json({
+        uploadURL: data.signedUrl,
+        path: data.path,
+      });
+    } catch (err: any) {
+      console.error("Error getting Supabase upload URL:", err);
+      res.status(500).json({ error: err.message });
     }
-
-    const { data, error } = await supabase.storage
-      .from("profile-images")
-      .createSignedUploadUrl(filename, { contentType });
-
-    if (error) throw error;
-
-    res.json({
-      uploadURL: data.signedUrl,
-      path: data.path,
-    });
-  } catch (err: any) {
-    console.error("Error getting Supabase upload URL:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+  });
 
   // -----------------------------
   // MESSAGING ROUTES
   // -----------------------------
   app.get("/api/messages/unread-count", isAuthenticated, async (req, res) => {
-  try {
-    const count = await storage.getUnreadMessagesCount((req.session as any).userId);
-    res.json({ count });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Failed to fetch unread messages" });
-  }
-});
+    try {
+      const count = await storage.getUnreadMessagesCount((req.session as any).userId);
+      res.json({ count });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to fetch unread messages" });
+    }
+  });
 
-// --- Get conversations with names and last message ---
-app.get("/api/messages/conversations", isAuthenticated, async (req, res) => {
+  app.get("/api/messages/conversations", isAuthenticated, async (req, res) => {
   try {
     const userId = (req.session as any).userId;
     const result = await pool.query(`
- SELECT
-  c.id,
-  c.coach_id,
-  coach.email AS coach_email,
-  c.student_id,
-  student.name AS student_name,
-  student_user.email AS student_email,
-  c.created_at,
-  m.content AS last_message,
-  m.created_at AS last_message_time
-FROM conversations c
-JOIN users coach ON coach.id = c.coach_id
-JOIN users student_user ON student_user.id = c.student_id
-LEFT JOIN students student ON student.user_id = student_user.id
-LEFT JOIN LATERAL (
-  SELECT content, created_at
-  FROM messages
-  WHERE conversation_id = c.id
-  ORDER BY created_at DESC
-  LIMIT 1
-) m ON TRUE
-WHERE c.coach_id = $1 OR c.student_id = $1
-ORDER BY m.created_at DESC NULLS LAST, c.created_at DESC;
+      SELECT
+        c.id,
+        c.coach_id,
+        coach_profile.name AS coach_name,
+        coach_user.email AS coach_email,
+        c.student_id,
+        student_profile.name AS student_name,
+        student_user.email AS student_email,
+        c.created_at,
+        m.content AS last_message,
+        m.created_at AS last_message_time
+      FROM conversations c
+      JOIN users coach_user ON coach_user.id = c.coach_id
+      LEFT JOIN coaches coach_profile ON coach_profile.user_id = c.coach_id
+      JOIN users student_user ON student_user.id = c.student_id
+      LEFT JOIN students student_profile ON student_profile.user_id = c.student_id
+      LEFT JOIN LATERAL (
+        SELECT content, created_at
+        FROM messages
+        WHERE conversation_id = c.id
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) m ON TRUE
+      WHERE c.coach_id = $1 OR c.student_id = $1
+      ORDER BY m.created_at DESC NULLS LAST, c.created_at DESC;
     `, [userId]);
-console.log(JSON.stringify(result.rows, null, 2));
+
+    console.log("conversations rows:", JSON.stringify(result.rows, null, 2));
     res.json({ conversations: result.rows });
   } catch (error) {
-    console.error(error);
+    console.error("Failed to fetch conversations:", error);
     res.status(500).json({ error: "Failed to fetch conversations" });
   }
 });
 
-// --- Get all messages for a conversation ID ---
-app.get("/api/messages/:conversationId", isAuthenticated, async (req, res) => {
-  try {
-    const { conversationId } = req.params;
-    const { rows } = await pool.query(
-      `SELECT id, conversation_id, sender_id, content, created_at
-       FROM messages
-       WHERE conversation_id = $1
-       ORDER BY created_at ASC`,
-      [conversationId]
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error("Error fetching messages:", err);
-    res.status(500).json({ error: "Failed to fetch messages" });
-  }
-});
+  app.get("/api/messages/:conversationId", isAuthenticated, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const { rows } = await pool.query(
+        `SELECT id, conversation_id, sender_id, content, created_at
+         FROM messages
+         WHERE conversation_id = $1
+         ORDER BY created_at ASC`,
+        [conversationId]
+      );
+      res.json(rows);
+    } catch (err) {
+      console.error("Error fetching messages:", err);
+      res.status(500).json({ error: "Failed to fetch messages" });
+    }
+  });
 
-// --- Send a message ---
-app.post("/api/messages/send", isAuthenticated, async (req, res) => {
-  try {
-    const senderId = (req.session as any).userId;
-    const { conversationId, content } = req.body;
-    if (!conversationId || !content?.trim()) return res.status(400).json({ error: "conversationId and message content required" });
+  app.post("/api/messages/send", isAuthenticated, async (req, res) => {
+    try {
+      const senderId = (req.session as any).userId;
+      const { conversationId, content } = req.body;
+      if (!conversationId || !content?.trim()) return res.status(400).json({ error: "conversationId and message content required" });
 
-    // Insert message into DB
-    const insert = await pool.query(
-      `INSERT INTO messages (conversation_id, sender_id, content)
-       VALUES ($1, $2, $3)
-       RETURNING id, conversation_id, sender_id, content, created_at`,
-      [conversationId, senderId, content.trim()]
-    );
-    const msg = insert.rows[0];
-    res.json({ message: msg });
-  } catch (error) {
-    console.error("Send message error:", error);
-    res.status(500).json({ error: "Failed to send message" });
-  }
-});
+      const insert = await pool.query(
+        `INSERT INTO messages (conversation_id, sender_id, content)
+         VALUES ($1, $2, $3)
+         RETURNING id, conversation_id, sender_id, content, created_at`,
+        [conversationId, senderId, content.trim()]
+      );
+      const msg = insert.rows[0];
+      res.json({ message: msg });
+    } catch (error) {
+      console.error("Send message error:", error);
+      res.status(500).json({ error: "Failed to send message" });
+    }
+  });
 
-// --- Mark messages as read for a conversation (dummy implementation, update if you use isRead column) ---
-app.post("/api/messages/mark-read/:conversationId", isAuthenticated, async (req, res) => {
-  // If you have an isRead column, update messages here.
-  // For now, just return success.
-  res.json({ success: true });
-});
-  
-   // --- STATIC SERVING (ALWAYS LAST) ---
-  const publicDir = path.join(__dirname, "public"); // dist/public
+  app.post("/api/messages/mark-read/:conversationId", isAuthenticated, async (req, res) => {
+    // If you have an isRead column, update messages here.
+    res.json({ success: true });
+  });
+
+  // --- STATIC SERVING (ALWAYS LAST) ---
+  const publicDir = path.join(__dirname, "public");
   const publicIndex = path.join(publicDir, "index.html");
   if (fs.existsSync(publicIndex)) {
     app.use(express.static(publicDir));
@@ -827,9 +820,9 @@ app.post("/api/messages/mark-read/:conversationId", isAuthenticated, async (req,
     });
   }
 
-console.log("publicDir:", publicDir);
-console.log("publicIndex exists?", fs.existsSync(publicIndex));
- 
+  console.log("publicDir:", publicDir);
+  console.log("publicIndex exists?", fs.existsSync(publicIndex));
+
   // --- HTTP Server ---
   const httpServer = createServer(app);
   return httpServer;

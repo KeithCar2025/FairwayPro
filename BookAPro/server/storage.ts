@@ -52,6 +52,9 @@ export interface IStorage {
   rejectCoach(coachId: string, adminId: string): Promise<Coach>;
   getApprovedCoaches(): Promise<Coach[]>;
   getStudentByUserId(userId: string): Promise<Student | undefined>;
+  // messaging helpers
+  getConversations?(userId: string): Promise<any[]>;
+  getMessagesForConversation?(conversationId: string): Promise<Message[]>;
 }
 
 function mapCoachUpdatesToDb(updates: any) {
@@ -139,44 +142,32 @@ export class DatabaseStorage implements IStorage {
 
     if (error) throw error;
 
-  return (data || []).map(mapCoachDbToApi);
-}
+    return (data || []).map(mapCoachDbToApi);
+  }
   
-async getCoachCalendarSettings(coachId: string) {
-  const { data, error } = await supabase
-    .from('coach_calendar_settings')
-    .select('*')
-    .eq('coach_id', coachId)
-    .single();
-
-  if (error && error.code !== "PGRST116") {
-    throw error;
-  }
-
-  if (!data) return null;
-
-  return {
-    coachId: data.coach_id,
-    googleCalendarId: data.google_calendar_id,
-    googleRefreshToken: data.google_refresh_token,
-    isEnabled: data.is_enabled,
-    lastSyncedAt: data.last_synced_at,
-    lastSyncToken: data.last_sync_token
-  };
-}
-
-  // ------------------ Messaging ------------------
-  async getConversations(userId: string): Promise<any[]> {
-    // Basic: all conversations for the user
+  async getCoachCalendarSettings(coachId: string) {
     const { data, error } = await supabase
-      .from('conversations')
+      .from('coach_calendar_settings')
       .select('*')
-      .or(`coach_id.eq.${userId},student_id.eq.${userId}`)
-      .order('created_at', { ascending: false });
+      .eq('coach_id', coachId)
+      .single();
 
-    if (error) throw error;
-    return data ?? [];
+    if (error && error.code !== "PGRST116") {
+      throw error;
+    }
+
+    if (!data) return null;
+
+    return {
+      coachId: data.coach_id,
+      googleCalendarId: data.google_calendar_id,
+      googleRefreshToken: data.google_refresh_token,
+      isEnabled: data.is_enabled,
+      lastSyncedAt: data.last_synced_at,
+      lastSyncToken: data.last_sync_token
+    };
   }
+
   // ------------------ Users ------------------
   async getUser(id: string): Promise<User | undefined> {
     const { data, error } = await supabase
@@ -196,42 +187,42 @@ async getCoachCalendarSettings(coachId: string) {
     return error ? null : (data as User);
   }
 
-async createUser(userData: CreateUserData): Promise<User> {
-  const hashedPassword = await bcrypt.hash(userData.password, 12);
+  async createUser(userData: CreateUserData): Promise<User> {
+    const hashedPassword = await bcrypt.hash(userData.password, 12);
 
-  const { data, error } = await supabase
-    .from('users')
-    .insert({
-      id: uuidv4(),
-      email: userData.email,
-      password_hash: hashedPassword,
-      role: userData.role || 'student',
-      auth_provider: 'password', // <--- ADD THIS LINE
-    })
-    .select()
-    .single();
+    const { data, error } = await supabase
+      .from('users')
+      .insert({
+        id: uuidv4(),
+        email: userData.email,
+        password_hash: hashedPassword,
+        role: userData.role || 'student',
+        auth_provider: 'password',
+      })
+      .select()
+      .single();
 
-  if (error) throw error;
-  return data as User;
-}
-
-async verifyPassword(email: string, password: string): Promise<User | null> {
-  const user = await this.getUserByEmail(email);
-  if (!user) return null;
-
-  // Allow password login for 'password', 'local', or null (legacy)
-  if (
-    user.auth_provider !== 'password' &&
-    user.auth_provider !== 'local' &&
-    user.auth_provider !== null
-  ) {
-    // prevent password login for Google or other OAuth users
-    return null;
+    if (error) throw error;
+    return data as User;
   }
 
-  const isValid = await bcrypt.compare(password, user.password_hash);
-  return isValid ? user : null;
-}
+  async verifyPassword(email: string, password: string): Promise<User | null> {
+    const user = await this.getUserByEmail(email);
+    if (!user) return null;
+
+    // Allow password login for 'password', 'local', or null (legacy)
+    if (
+      user.auth_provider !== 'password' &&
+      user.auth_provider !== 'local' &&
+      user.auth_provider !== null
+    ) {
+      // prevent password login for Google or other OAuth users
+      return null;
+    }
+
+    const isValid = await bcrypt.compare(password, user.password_hash);
+    return isValid ? user : null;
+  }
 
   async isUserAdmin(userId: string): Promise<boolean> {
     const { data, error } = await supabase
@@ -268,20 +259,17 @@ async verifyPassword(email: string, password: string): Promise<User | null> {
     if (error) throw error;
     return data as Coach[];
   }
-async getBookingsByCoach(coachId) {
-  const { data, error } = await supabase
-    ? await supabase
+
+  async getBookingsByCoach(coachId: string) {
+    const { data, error } = await supabase
       .from('bookings')
       .select('*')
       .eq('coach_id', coachId)
-      .order('date', { ascending: false })
-    : await pool.query('SELECT * FROM bookings WHERE coach_id = $1 ORDER BY date DESC', [coachId]);
-  
-  if (error) throw error;
-  if (data) return data;
-  if (typeof rows !== 'undefined') return rows;
-  return [];
-}
+      .order('date', { ascending: false });
+    if (error) throw error;
+    return data;
+  }
+
   async getAllBookings(): Promise<Booking[]> {
     const { data, error } = await supabase
       .from('bookings')
@@ -412,7 +400,7 @@ async getBookingsByCoach(coachId) {
       bio: coach.bio,
       location: coach.location,
       pricePerHour: coach.price_per_hour,
-      yearsExperience: coach.years_experiance,
+      yearsExperience: coach.years_experience,
       pgaCertificationId: coach.pga_certification_id,
       image: coach.image,
       isVerified: coach.is_verified,
@@ -445,15 +433,17 @@ async getBookingsByCoach(coachId) {
       .single();
     return error ? undefined : (data as Student);
   }
-async getStudentByUserId(userId: string): Promise<Student | undefined> {
-  const { data, error } = await supabase
-    .from('students')
-    .select('*')
-    .eq('user_id', userId)
-    .single();
-  if (error) return undefined;
-  return data as Student;
-}
+
+  async getStudentByUserId(userId: string): Promise<Student | undefined> {
+    const { data, error } = await supabase
+      .from('students')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+    if (error) return undefined;
+    return data as Student;
+  }
+
   async createStudent(student: InsertStudent): Promise<Student> {
     const { data, error } = await supabase
       .from('students')
@@ -485,15 +475,15 @@ async getStudentByUserId(userId: string): Promise<Student | undefined> {
   }
 
   // ------------------ Bookings ------------------
-  async getBookingsByStudent(studentId) {
-  const { data, error } = await supabase
-    .from('bookings')
-    .select('*')
-    .eq('student_id', studentId)
-    .order('date', { ascending: false }); // Most recent first
-  if (error) throw error;
-  return data;
-}
+  async getBookingsByStudent(studentId: string) {
+    const { data, error } = await supabase
+      .from('bookings')
+      .select('*')
+      .eq('student_id', studentId)
+      .order('date', { ascending: false }); // Most recent first
+    if (error) throw error;
+    return data;
+  }
   
   async getBooking(id: string): Promise<Booking | undefined> {
     const { data, error } = await supabase
@@ -540,8 +530,8 @@ async getStudentByUserId(userId: string): Promise<Student | undefined> {
     const { data, error } = await supabase
       .from('reviews')
       .select('*')
-      .eq('coachId', coachId)
-      .order('createdAt', { ascending: false });
+      .eq('coach_id', coachId)
+      .order('created_at', { ascending: false });
     return error ? [] : (data as Review[]);
   }
 
@@ -549,7 +539,7 @@ async getStudentByUserId(userId: string): Promise<Student | undefined> {
   async logAdminAction(adminId: string, action: string, targetType: string, targetId?: string, details?: string): Promise<void> {
     const { error } = await supabase
       .from('admin_actions')
-      .insert({ adminId, action, targetType, targetId, details });
+      .insert({ admin_id: adminId, action, target_type: targetType, target_id: targetId, details });
     if (error) throw error;
   }
 
@@ -568,7 +558,7 @@ async getStudentByUserId(userId: string): Promise<Student | undefined> {
       .select('*')
       .eq('approval_status', 'pending');
     if (error) throw error;
-    return (data || []).map(coach => ({
+    return (data || []).map((coach: any) => ({
       id: coach.id,
       name: coach.name,
       email: coach.email,
@@ -584,6 +574,73 @@ async getStudentByUserId(userId: string): Promise<Student | undefined> {
   }
 
   // ------------------ Messaging ------------------
+
+  // Use Supabase relational selects now that FK constraints exist.
+  // Returns conversations with joined coach and student user records and the messages array.
+  async getConversations(userId: string): Promise<any[]> {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select(`
+        id,
+        coach_id,
+        student_id,
+        created_at,
+        coach:coach_id (id, name, email),
+        student:student_id (id, name, email),
+        messages:messages (
+          id,
+          conversation_id,
+          sender_id,
+          content,
+          created_at,
+          sender:sender_id (id, name, email)
+        )
+      `)
+      .or(`coach_id.eq.${userId},student_id.eq.${userId}`)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // For convenience, map to include last_message and last_message_time (derived)
+    const conversations = (data || []).map((c: any) => {
+      const lastMessage = Array.isArray(c.messages) && c.messages.length > 0
+        ? c.messages.reduce((latest: any, m: any) => !latest || new Date(m.created_at) > new Date(latest.created_at) ? m : latest, null)
+        : null;
+      return {
+        id: c.id,
+        coach_id: c.coach_id,
+        coach: c.coach || null,
+        student_id: c.student_id,
+        student: c.student || null,
+        created_at: c.created_at,
+        last_message: lastMessage ? lastMessage.content : null,
+        last_message_time: lastMessage ? lastMessage.created_at : null,
+        raw_messages: c.messages || []
+      };
+    });
+
+    return conversations;
+  }
+
+  // Get all messages for a conversation (with sender info)
+  async getMessagesForConversation(conversationId: string): Promise<Message[]> {
+    const { data, error } = await supabase
+      .from('messages')
+      .select(`
+        id,
+        conversation_id,
+        sender_id,
+        content,
+        created_at,
+        sender:sender_id (id, name, email)
+      `)
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+    return data ?? [];
+  }
+
   async sendMessage(message: InsertMessage): Promise<Message> {
     const { data, error } = await supabase
       .from('messages')
@@ -595,20 +652,23 @@ async getStudentByUserId(userId: string): Promise<Student | undefined> {
   }
 
   async getMessagesWithUser(userId1: string, userId2: string): Promise<Message[]> {
+    // Note: This function assumes messages table has sender_id and receiver_id.
+    // If you use conversation-based messages (no receiver_id), prefer getMessagesForConversation.
     const { data, error } = await supabase
       .from('messages')
       .select('*')
-      .or(`and(senderId.eq.${userId1},receiverId.eq.${userId2}),and(senderId.eq.${userId2},receiverId.eq.${userId1})`)
-      .order('createdAt', { ascending: true });
+      .or(`and(sender_id.eq.${userId1},receiver_id.eq.${userId2}),and(sender_id.eq.${userId2},receiver_id.eq.${userId1})`)
+      .order('created_at', { ascending: true });
     return error ? [] : (data as Message[]);
   }
 
   async getUnreadMessagesCount(userId: string): Promise<number> {
+    // If you have receiver_id and is_read: adapt. If using conversation model, this may need rework.
     const { count, error } = await supabase
       .from('messages')
       .select('id', { count: 'exact', head: true })
-      .eq('receiverId', userId)
-      .eq('isRead', false);
+      .eq('receiver_id', userId)
+      .eq('is_read', false);
     if (error) throw error;
     return count ?? 0;
   }
