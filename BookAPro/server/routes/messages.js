@@ -7,20 +7,29 @@ const router = express.Router();
 // --- 1️⃣ Get or create a conversation between a coach and a student ---
 router.post("/conversation", isAuthenticated, async (req, res) => {
   try {
-    const { coachId, studentId } = req.body;
+    const { coachId, studentId } = req.body; // studentId is likely students.id
     const userId = req.session.userId;
-    const finalStudentId = studentId || userId;
 
-    if (!coachId || !finalStudentId) {
+    if (!coachId || !studentId) {
       return res.status(400).json({ error: "coachId and studentId are required" });
     }
+
+    // Lookup students.user_id from students.id
+    const stuRes = await pool.query(
+      `SELECT user_id FROM students WHERE id = $1`,
+      [studentId]
+    );
+    if (stuRes.rowCount === 0) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+    const studentUserId = stuRes.rows[0].user_id;
 
     // Check if conversation already exists
     const { rows } = await pool.query(
       `SELECT id, coach_id, student_id, created_at 
        FROM conversations 
        WHERE coach_id = $1 AND student_id = $2`,
-      [coachId, finalStudentId]
+      [coachId, studentUserId]
     );
 
     if (rows[0]) {
@@ -37,7 +46,7 @@ router.post("/conversation", isAuthenticated, async (req, res) => {
       `INSERT INTO conversations (coach_id, student_id)
        VALUES ($1, $2)
        RETURNING id, coach_id, student_id, created_at`,
-      [coachId, finalStudentId]
+      [coachId, studentUserId]
     );
 
     const conv = insert.rows[0];
@@ -104,5 +113,7 @@ router.get("/messages/:conversationId", isAuthenticated, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch messages" });
   }
 });
+
+
 
 export default router;

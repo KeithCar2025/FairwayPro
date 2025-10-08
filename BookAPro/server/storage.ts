@@ -164,6 +164,19 @@ async getCoachCalendarSettings(coachId: string) {
     lastSyncToken: data.last_sync_token
   };
 }
+
+  // ------------------ Messaging ------------------
+  async getConversations(userId: string): Promise<any[]> {
+    // Basic: all conversations for the user
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('*')
+      .or(`coach_id.eq.${userId},student_id.eq.${userId}`)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return data ?? [];
+  }
   // ------------------ Users ------------------
   async getUser(id: string): Promise<User | undefined> {
     const { data, error } = await supabase

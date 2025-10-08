@@ -710,31 +710,98 @@ app.post("/api/objects/upload", isAuthenticated, async (req, res) => {
   // MESSAGING ROUTES
   // -----------------------------
   app.get("/api/messages/unread-count", isAuthenticated, async (req, res) => {
-    try { const count = await storage.getUnreadMessagesCount((req.session as any).userId); res.json({ count }); } 
-    catch (error) { console.error(error); res.status(500).json({ error: "Failed to fetch unread messages" }); }
-  });
+  try {
+    const count = await storage.getUnreadMessagesCount((req.session as any).userId);
+    res.json({ count });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch unread messages" });
+  }
+});
 
-  app.get("/api/messages/conversations", isAuthenticated, async (req, res) => {
-    try { const conversations = await storage.getConversations((req.session as any).userId); res.json({ conversations }); } 
-    catch (error) { console.error(error); res.status(500).json({ error: "Failed to fetch conversations" }); }
-  });
+// --- Get conversations with names and last message ---
+app.get("/api/messages/conversations", isAuthenticated, async (req, res) => {
+  try {
+    const userId = (req.session as any).userId;
+    const result = await pool.query(`
+ SELECT
+  c.id,
+  c.coach_id,
+  coach.email AS coach_email,
+  c.student_id,
+  student.name AS student_name,
+  student_user.email AS student_email,
+  c.created_at,
+  m.content AS last_message,
+  m.created_at AS last_message_time
+FROM conversations c
+JOIN users coach ON coach.id = c.coach_id
+JOIN users student_user ON student_user.id = c.student_id
+LEFT JOIN students student ON student.user_id = student_user.id
+LEFT JOIN LATERAL (
+  SELECT content, created_at
+  FROM messages
+  WHERE conversation_id = c.id
+  ORDER BY created_at DESC
+  LIMIT 1
+) m ON TRUE
+WHERE c.coach_id = $1 OR c.student_id = $1
+ORDER BY m.created_at DESC NULLS LAST, c.created_at DESC;
+    `, [userId]);
+console.log(JSON.stringify(result.rows, null, 2));
+    res.json({ conversations: result.rows });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to fetch conversations" });
+  }
+});
 
-  app.post("/api/messages/send", isAuthenticated, async (req, res) => {
-    try {
-      const senderId = (req.session as any).userId;
-      const { receiverId, content, bookingId } = req.body;
-      if (!receiverId || !content?.trim()) return res.status(400).json({ error: "Receiver ID and message content required" });
+// --- Get all messages for a conversation ID ---
+app.get("/api/messages/:conversationId", isAuthenticated, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const { rows } = await pool.query(
+      `SELECT id, conversation_id, sender_id, content, created_at
+       FROM messages
+       WHERE conversation_id = $1
+       ORDER BY created_at ASC`,
+      [conversationId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("Error fetching messages:", err);
+    res.status(500).json({ error: "Failed to fetch messages" });
+  }
+});
 
-      const receiver = await storage.getUser(receiverId);
-      if (!receiver) return res.status(404).json({ error: "Receiver not found" });
+// --- Send a message ---
+app.post("/api/messages/send", isAuthenticated, async (req, res) => {
+  try {
+    const senderId = (req.session as any).userId;
+    const { conversationId, content } = req.body;
+    if (!conversationId || !content?.trim()) return res.status(400).json({ error: "conversationId and message content required" });
 
-      const message = await storage.sendMessage({ senderId, receiverId, content: content.trim(), bookingId: bookingId || null });
-      res.json({ message });
-    } catch (error) {
-      console.error("Send message error:", error);
-      res.status(500).json({ error: "Failed to send message" });
-    }
-  });
+    // Insert message into DB
+    const insert = await pool.query(
+      `INSERT INTO messages (conversation_id, sender_id, content)
+       VALUES ($1, $2, $3)
+       RETURNING id, conversation_id, sender_id, content, created_at`,
+      [conversationId, senderId, content.trim()]
+    );
+    const msg = insert.rows[0];
+    res.json({ message: msg });
+  } catch (error) {
+    console.error("Send message error:", error);
+    res.status(500).json({ error: "Failed to send message" });
+  }
+});
+
+// --- Mark messages as read for a conversation (dummy implementation, update if you use isRead column) ---
+app.post("/api/messages/mark-read/:conversationId", isAuthenticated, async (req, res) => {
+  // If you have an isRead column, update messages here.
+  // For now, just return success.
+  res.json({ success: true });
+});
   
    // --- STATIC SERVING (ALWAYS LAST) ---
   const publicDir = path.join(__dirname, "public"); // dist/public

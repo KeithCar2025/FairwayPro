@@ -8,6 +8,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { supabase } from "./supabase"; // your supabase client
 import passport from "passport";
+import messagesRouter from "./routes/messages.js";
 
 
 const PgSession = ConnectPgSimple(session);
@@ -43,7 +44,9 @@ cookie: {
 app.use(passport.initialize());
 app.use(passport.session());
 await registerRoutes(app);
+
 // --- Health Check Route ---
+app.use("/api/messages", messagesRouter);
 app.get("/healthz", (_req, res) => res.send("OK"));
 
 // --- Logging Middleware ---

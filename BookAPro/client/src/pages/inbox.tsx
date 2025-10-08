@@ -19,7 +19,6 @@ interface User {
 interface Message {
   id: string;
   sender_id: string;
-  receiver_id: string;
   content: string;
   created_at: string;
 }
@@ -27,10 +26,14 @@ interface Message {
 interface Conversation {
   id: string;
   coach_id: string;
+  coach_name?: string;
+  coach_email?: string;
   student_id: string;
+  student_name?: string;
+  student_email?: string;
   last_message: string;
   last_message_time: string;
-  unread_count: number;
+  unread_count?: number;
 }
 
 export default function Inbox() {
@@ -83,8 +86,7 @@ export default function Inbox() {
       const response = await fetch(`/api/messages/${conversation.id}`, { credentials: "include" });
       if (response.ok) {
         const data = await response.json();
-        setMessages(data.messages || []);
-
+        setMessages(data || []);
         // Mark messages as read
         await fetch(`/api/messages/mark-read/${conversation.id}`, {
           method: "POST",
@@ -105,59 +107,54 @@ export default function Inbox() {
     }
   };
 
-const sendMessage = async () => {
-  if (!selectedConversation || !newMessage.trim() || isSending) return;
+  const sendMessage = async () => {
+    if (!selectedConversation || !newMessage.trim() || isSending) return;
 
-  setIsSending(true);
+    setIsSending(true);
 
-  try {
-    const res = await fetch("/api/messages/message", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        conversationId: selectedConversation.id,
-        content: newMessage.trim(),
-      }),
-    });
-
-    if (res.ok) {
-      // Append the new message locally
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          sender_id: currentUser!.id,
-          receiver_id:
-            currentUser.role === "coach"
-              ? selectedConversation.student_id
-              : selectedConversation.coach_id,
+    try {
+      const res = await fetch("/api/messages/message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          conversationId: selectedConversation.id,
           content: newMessage.trim(),
-          created_at: new Date().toISOString(),
-        },
-      ]);
+        }),
+      });
 
-      // Update conversation preview locally
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === selectedConversation.id
-            ? { ...c, last_message: newMessage.trim(), last_message_time: new Date().toISOString() }
-            : c
-        )
-      );
+      if (res.ok) {
+        // Append the new message locally
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            sender_id: currentUser!.id,
+            content: newMessage.trim(),
+            created_at: new Date().toISOString(),
+          },
+        ]);
 
-      setNewMessage("");
-    } else {
-      const data = await res.json();
-      console.error("Failed to send message:", data.error);
+        // Update conversation preview locally
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === selectedConversation.id
+              ? { ...c, last_message: newMessage.trim(), last_message_time: new Date().toISOString() }
+              : c
+          )
+        );
+
+        setNewMessage("");
+      } else {
+        const data = await res.json();
+        console.error("Failed to send message:", data.error);
+      }
+    } catch (err) {
+      console.error("Error sending message:", err);
+    } finally {
+      setIsSending(false);
     }
-  } catch (err) {
-    console.error("Error sending message:", err);
-  } finally {
-    setIsSending(false);
-  }
-};
-
+  };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -178,7 +175,9 @@ const sendMessage = async () => {
   const filteredConversations = searchTerm
     ? conversations.filter((c) => {
         const name =
-          currentUser?.role === "coach" ? c.student_id : c.coach_id;
+          currentUser?.role === "coach"
+            ? c.student_name || c.student_email || c.student_id
+            : c.coach_name || c.coach_email || c.coach_id;
         return name.toLowerCase().includes(searchTerm.toLowerCase());
       })
     : conversations;
@@ -232,23 +231,27 @@ const sendMessage = async () => {
                 </div>
               ) : (
                 filteredConversations.map((conv) => {
-                  const name = currentUser.role === "coach" ? conv.student_id : conv.coach_id;
+                  const name = currentUser.role === "coach"
+                    ? conv.student_name || conv.student_email || conv.student_id
+                    : conv.coach_name || conv.coach_email || conv.coach_id;
                   return (
                     <div
                       key={conv.id}
                       onClick={() => loadConversation(conv)}
-                      className={`p-4 border-b cursor-pointer hover-elevate ${
+                      className={`p-4 border-b cursor-pointer hover:bg-muted/40 transition ${
                         selectedConversation?.id === conv.id ? "bg-muted" : ""
                       }`}
                     >
                       <div className="flex items-start gap-3">
                         <Avatar className="w-10 h-10">
-                          <AvatarFallback>{getUserInitials(name)}</AvatarFallback>
+                          <AvatarFallback>
+                            {getUserInitials(name)}
+                          </AvatarFallback>
                         </Avatar>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between mb-1">
                             <p className="font-medium truncate">{name}</p>
-                            {conv.unread_count > 0 && (
+                            {conv.unread_count && conv.unread_count > 0 && (
                               <Badge variant="destructive" className="text-xs">
                                 {conv.unread_count}
                               </Badge>
@@ -276,16 +279,16 @@ const sendMessage = async () => {
                       <AvatarFallback>
                         {getUserInitials(
                           currentUser.role === "coach"
-                            ? selectedConversation.student_id
-                            : selectedConversation.coach_id
+                            ? selectedConversation.student_name || selectedConversation.student_email || selectedConversation.student_id
+                            : selectedConversation.coach_name || selectedConversation.coach_email || selectedConversation.coach_id
                         )}
                       </AvatarFallback>
                     </Avatar>
                     <div>
                       <CardTitle className="text-lg">
                         {currentUser.role === "coach"
-                          ? selectedConversation.student_id
-                          : selectedConversation.coach_id}
+                          ? selectedConversation.student_name || selectedConversation.student_email || selectedConversation.student_id
+                          : selectedConversation.coach_name || selectedConversation.coach_email || selectedConversation.coach_id}
                       </CardTitle>
                       <CardDescription>
                         {currentUser.role === "coach" ? "Student" : "Coach"}
@@ -301,27 +304,33 @@ const sendMessage = async () => {
                     ) : messages.length === 0 ? (
                       <div className="text-center py-8">No messages yet</div>
                     ) : (
-                      messages.map((msg) => (
-                        <div
-                          key={msg.id}
-                          className={`flex gap-3 ${
-                            msg.sender_id === currentUser.id ? "justify-end" : "justify-start"
-                          }`}
-                        >
+                      messages.map((msg) => {
+                        const isMine = msg.sender_id === currentUser.id;
+                        return (
                           <div
-                            className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                              msg.sender_id === currentUser.id
-                                ? "bg-primary text-primary-foreground"
-                                : "bg-muted"
-                            }`}
+                            key={msg.id}
+                            className={`flex ${isMine ? "justify-end" : "justify-start"}`}
                           >
-                            <p className="text-sm">{msg.content}</p>
-                            <p className="text-xs mt-1 text-muted-foreground/70">
-                              {formatTime(msg.created_at)}
-                            </p>
+                            <div
+                              className={`relative max-w-xs lg:max-w-md px-4 py-2 rounded-xl shadow
+                                ${isMine
+                                  ? "bg-primary text-primary-foreground ml-auto"
+                                  : "bg-muted text-foreground mr-auto"
+                                }`}
+                              style={{
+                                borderRadius: isMine
+                                  ? "20px 20px 6px 20px"
+                                  : "20px 20px 20px 6px",
+                              }}
+                            >
+                              <p className="text-sm break-words">{msg.content}</p>
+                              <p className="text-xs mt-1 text-muted-foreground/70 text-right">
+                                {formatTime(msg.created_at)}
+                              </p>
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
 
