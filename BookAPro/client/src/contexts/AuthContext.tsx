@@ -6,8 +6,26 @@ interface User {
   role: string;
 }
 
+interface Student {
+  id: string;
+  name: string;
+  phone?: string;
+  skillLevel?: string;
+  user_id: string;
+}
+
+interface Coach {
+  id: string;
+  name: string;
+  location?: string;
+  bio?: string;
+  user_id: string;
+}
+
 interface AuthContextType {
   user: User | null;
+  student: Student | null;
+  coach: Coach | null;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -17,23 +35,48 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [student, setStudent] = useState<Student | null>(null);
+  const [coach, setCoach] = useState<Coach | null>(null);
 
-  // Refresh user (on mount or after login)
   const refreshUser = async () => {
     try {
       const res = await fetch("/api/auth/me", { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data.user);
-      } else {
+      if (!res.ok) {
         setUser(null);
+        setStudent(null);
+        setCoach(null);
+        return;
       }
+
+      const data = await res.json();
+      setUser(data.user);
+
+      // If user is a student, fetch student profile
+      if (data.user.role === "student") {
+        const studentRes = await fetch("/api/students/me", { credentials: "include" });
+        if (studentRes.ok) {
+          const studentData = await studentRes.json();
+          setStudent(studentData);
+        }
+      }
+
+      // If user is a coach, fetch coach profile
+      if (data.user.role === "coach") {
+        const coachRes = await fetch("/api/coaches/me", { credentials: "include" });
+        if (coachRes.ok) {
+          const coachData = await coachRes.json();
+          setCoach(coachData);
+        }
+      }
+
     } catch (err) {
+      console.error("Error refreshing user:", err);
       setUser(null);
+      setStudent(null);
+      setCoach(null);
     }
   };
 
-  // Login with email/password
   const login = async (email: string, password: string) => {
     try {
       const res = await fetch("/api/auth/login", {
@@ -44,34 +87,31 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
 
       if (!res.ok) return false;
-
       const data = await res.json();
-      setUser(data.user); // ✅ Update context state
+      setUser(data.user);
+      await refreshUser(); // load student/coach profile
       return true;
-    } catch (err) {
+    } catch {
       return false;
     }
   };
 
-  // Logout
   const logout = async () => {
-    try {
-      const res = await fetch("/api/auth/logout", {
-        method: "POST",
-        credentials: "include",
-      });
-      if (res.ok) setUser(null);
-    } catch (err) {
-      console.error("Logout failed", err);
-    }
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "include",
+    });
+    setUser(null);
+    setStudent(null);
+    setCoach(null);
   };
 
   useEffect(() => {
-    refreshUser(); // Check session on mount (including OAuth redirects)
+    refreshUser();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, student, coach, login, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

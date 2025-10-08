@@ -105,57 +105,59 @@ export default function Inbox() {
     }
   };
 
-  const sendMessage = async () => {
-    if (!selectedConversation || !newMessage.trim() || isSending) return;
+const sendMessage = async () => {
+  if (!selectedConversation || !newMessage.trim() || isSending) return;
 
-    setIsSending(true);
-    try {
-      const res = await fetch("/api/messages/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          receiverId:
-            currentUser?.role === "coach"
+  setIsSending(true);
+
+  try {
+    const res = await fetch("/api/messages/message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        conversationId: selectedConversation.id,
+        content: newMessage.trim(),
+      }),
+    });
+
+    if (res.ok) {
+      // Append the new message locally
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          sender_id: currentUser!.id,
+          receiver_id:
+            currentUser.role === "coach"
               ? selectedConversation.student_id
               : selectedConversation.coach_id,
           content: newMessage.trim(),
-        }),
-      });
+          created_at: new Date().toISOString(),
+        },
+      ]);
 
-      if (res.ok) {
-        // Append message locally
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            sender_id: currentUser!.id,
-            receiver_id:
-              currentUser.role === "coach"
-                ? selectedConversation.student_id
-                : selectedConversation.coach_id,
-            content: newMessage.trim(),
-            created_at: new Date().toISOString(),
-          },
-        ]);
+      // Update conversation preview locally
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === selectedConversation.id
+            ? { ...c, last_message: newMessage.trim(), last_message_time: new Date().toISOString() }
+            : c
+        )
+      );
 
-        // Update conversation preview
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === selectedConversation.id
-              ? { ...c, last_message: newMessage.trim(), last_message_time: new Date().toISOString() }
-              : c
-          )
-        );
-
-        setNewMessage("");
-      }
-    } catch (err) {
-      console.error("Error sending message:", err);
-    } finally {
-      setIsSending(false);
+      setNewMessage("");
+    } else {
+      const data = await res.json();
+      console.error("Failed to send message:", data.error);
     }
-  };
+  } catch (err) {
+    console.error("Error sending message:", err);
+  } finally {
+    setIsSending(false);
+  }
+};
+
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {

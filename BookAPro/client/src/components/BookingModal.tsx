@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useAuth } from "@/contexts/AuthContext"; 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,8 @@ export interface BookingData {
 export default function BookingModal({ coach, isOpen, onClose }: BookingModalProps) {
   const [selectedDate, setSelectedDate] = useState<Date>();
   const [selectedTime, setSelectedTime] = useState("");
+  const auth = useAuth();
+const currentUser = auth?.user; 
   const [duration, setDuration] = useState("60");
   const [lessonType, setLessonType] = useState("");
   const [location, setLocation] = useState("");
@@ -52,7 +55,29 @@ export default function BookingModal({ coach, isOpen, onClose }: BookingModalPro
   const [bookingSuccess, setBookingSuccess] = useState(false);
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isBooking, setIsBooking] = useState(false);
+  
+useEffect(() => {
+  if (!isOpen || !currentUser) return; // only run when modal opens and user exists
 
+  fetch("/api/students/me", { credentials: "include" })
+    .then(res => (res.ok ? res.json() : null))
+    .then(data => {
+      setStudentInfo(prev => ({
+        ...prev,
+        name: data?.name || prev.name || "",
+        email: currentUser?.email || prev.email || "",
+        phone: data?.phone || prev.phone || "",
+        skillLevel: data?.skillLevel || prev.skillLevel || "",
+      }));
+    })
+    .catch(() => {
+      // fallback in case fetch fails
+      setStudentInfo(prev => ({
+        ...prev,
+        email: currentUser?.email || prev.email || "",
+      }));
+    });
+}, [isOpen, currentUser]);
   useEffect(() => {
     if (!coach || !selectedDate) {
       setAvailableTimes([]);

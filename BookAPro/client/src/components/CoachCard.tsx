@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Star, MapPin, Clock, DollarSign } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext"; 
 
 export interface Coach {
   id: string;
@@ -43,6 +44,7 @@ interface CoachCardProps {
 
 export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachCardProps) {
   const [isHovered, setIsHovered] = useState(false);
+    const { user } = useAuth();
 
   const renderStars = (rating: number) => {
     return Array.from({ length: 5 }, (_, i) => (
@@ -187,17 +189,32 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
               >
                 View Profile
               </Button>
-              <Button 
-                size="sm" 
-                className="flex-1"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onBookLesson(coach);
-                }}
-                data-testid={`button-book-lesson-${coach.id}`}
-              >
-                Book Lesson
-              </Button>
+			  
+			  
+           {/* ✅ Require login to book */}
+              {user ? (
+                <Button
+                  size="sm"
+                  className="flex-1"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onBookLesson(coach);
+                  }}
+                  data-testid={`button-book-lesson-${coach.id}`}
+                >
+                  Book Lesson
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  className="flex-1"
+                  variant="secondary"
+                  disabled
+                  data-testid={`button-signin-required-${coach.id}`}
+                >
+                  Sign in to Book
+                </Button>
+              )}
             </div>
           </div>
         </div>

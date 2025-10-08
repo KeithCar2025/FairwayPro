@@ -621,15 +621,15 @@ app.post("/api/bookings", async (req, res) => {
       if (coach) bookings = await storage.getBookingsByCoach(coach.id);
     }
 
-    const enriched = await Promise.all(bookings.map(async b => {
-      const coach = await storage.getCoach(b.coach_id);
-      const student = await storage.getStudent(b.student_id);
-      return {
-        ...b,
-        coach: coach ? { name: coach.name, image: coach.image } : null,
-        student: student ? { name: student.name } : null
-      };
-    }));
+const enriched = await Promise.all(bookings.map(async b => {
+  const coach = await storage.getCoach(b.coach_id);
+  const student = await storage.getStudent(b.student_id);
+  return {
+    ...b,
+    coach: coach ? { id: coach.id, name: coach.name, image: coach.image } : null,
+    student: student ? { id: student.id, email: student.email, name: student.name } : null
+  };
+}));
 
     res.json({ bookings: enriched });
   } catch (error) {
