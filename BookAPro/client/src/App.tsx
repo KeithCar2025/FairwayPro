@@ -94,6 +94,29 @@ function App() {
 
 export default App;
 
+/**
+ * Helper: resolveImageUrl
+ * - Accepts the raw image value returned from the API (could be a full URL,
+ *   an absolute path like "/objects/...", or a storage/object key like "profile-images/abc.jpg").
+ * - Returns a browser-fetchable absolute URL string, or null if none.
+ */
+function resolveImageUrl(rawImage: any): string | null {
+  if (!rawImage) return null;
+  if (typeof rawImage !== "string") return null;
+
+  // Already a full URL -> use as-is
+  if (/^https?:\/\//i.test(rawImage)) return rawImage;
+
+  // Absolute path from backend (starts with "/objects/...")
+  if (rawImage.startsWith("/")) {
+    return typeof window !== "undefined" ? `${window.location.origin}${rawImage}` : rawImage;
+  }
+
+  // Relative storage key like "profile-images/2025/87e...jpg"
+  // Encode each segment but preserve the slashes so server routing still works
+  const encodedPath = rawImage.split("/").map(encodeURIComponent).join("/");
+  return typeof window !== "undefined" ? `${window.location.origin}/objects/${encodedPath}` : `/objects/${encodedPath}`;
+}
 function HomePage() {
   const [searchLocation, setSearchLocation] = useState("");
   const [showBookingModal, setShowBookingModal] = useState(false);
@@ -121,29 +144,35 @@ function HomePage() {
       const data = await res.json();
 
       // Map DB fields to frontend Coach type using correct column names
-      return data.map((c: any) => ({
-  id: c.id,
-  userId: c.user_id ?? c.userId,
-  name: c.name,
-  image: c.image || maleCoachImage,
-  rating: c.rating || 0,
-  reviewCount: c.review_count ?? c.reviewCount ?? 0,
-  distance: c.distance || "Unknown",
-  pricePerHour: c.price_per_hour ?? c.pricePerHour ?? 50,
-  bio: c.bio || "",
-  specialties: c.specialties || [],
-  location: c.location || "",
-  responseTime: c.response_time ?? c.responseTime ?? "Unknown",
-  availability: c.availability || "Available soon",
-  tools: c.tools || [],
-  certifications: c.certifications || [],
-  yearsExperience: c.years_experience ?? c.yearsExperience ?? 0,
-  videos: c.videos || [],
-  googleReviewsUrl: c.google_reviews_url ?? c.googleReviewsUrl ?? "",
-  googleRating: c.google_rating ?? c.googleRating ?? 0,
-  googleReviewCount: c.google_review_count ?? c.googleReviewCount ?? 0,
-  lastGoogleSync: c.last_google_sync ?? c.lastGoogleSync ?? "",
-}));
+      return data.map((c: any) => {
+        // Normalize image: prefer full URL, else resolve via /objects/..., else fall back to default asset
+        const resolved = resolveImageUrl(c.image ?? c.image_path ?? c.profile_image ?? "");
+        // If resolved is null, pick a sensible fallback - you could pick by gender if available.
+        const fallback = maleCoachImage;
+        return {
+          id: c.id,
+          userId: c.user_id ?? c.userId,
+          name: c.name,
+          image: resolved || fallback,
+          rating: c.rating || 0,
+          reviewCount: c.review_count ?? c.reviewCount ?? 0,
+          distance: c.distance || "Unknown",
+          pricePerHour: c.price_per_hour ?? c.pricePerHour ?? 50,
+          bio: c.bio || "",
+          specialties: c.specialties || [],
+          location: c.location || "",
+          responseTime: c.response_time ?? c.responseTime ?? "Unknown",
+          availability: c.availability || "Available soon",
+          tools: c.tools || [],
+          certifications: c.certifications || [],
+          yearsExperience: c.years_experience ?? c.yearsExperience ?? 0,
+          videos: c.videos || [],
+          googleReviewsUrl: c.google_reviews_url ?? c.googleReviewsUrl ?? "",
+          googleRating: c.google_rating ?? c.googleRating ?? 0,
+          googleReviewCount: c.google_review_count ?? c.googleReviewCount ?? 0,
+          lastGoogleSync: c.last_google_sync ?? c.lastGoogleSync ?? "",
+        } as Coach;
+      });
     },
   });
 

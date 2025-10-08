@@ -177,7 +177,23 @@ export class DatabaseStorage implements IStorage {
       .single();
     return error ? undefined : (data as User);
   }
+async createUserWithHashedPassword(userObj: { id: string; email: string; password_hash: string; role?: string; auth_provider?: string; }): Promise<User> {
+  const { id, email, password_hash, role = "student", auth_provider = "password" } = userObj;
+  const { data, error } = await supabase
+    .from("users")
+    .insert({
+      id,
+      email,
+      password_hash,
+      role,
+      auth_provider,
+    })
+    .select()
+    .single();
 
+  if (error) throw error;
+  return data as User;
+}
   async getUserByEmail(email: string): Promise<User | null> {
     const { data, error } = await supabase
       .from('users')

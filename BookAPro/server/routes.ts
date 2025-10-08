@@ -12,7 +12,17 @@ import bcrypt from "bcrypt";
 import { z } from "zod";
 import { isAuthenticated } from "./middleware/auth";
 import { pool } from "./db";
+import zxcvbn from "zxcvbn";
+import argon2 from "argon2";
+import rateLimit from "express-rate-limit";
+import { checkPwnedCount } from "./utils/pwned.js";
 
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // max 10 requests per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -129,33 +139,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // AUTH ROUTES
   // -----------------------------
 
-  app.post("/api/auth/register", async (req, res) => {
-    console.log("req.session at start of register:", req.session);
-    try {
-      const { email, password, name } = req.body;
-      if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+  app.post("/api/auth/register", authLimiter, async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "Email and password required" });
 
-      const existingUser = await storage.getUserByEmail(email);
-      if (existingUser) return res.status(400).json({ error: "User already exists" });
+    // 1) Basic check whether user exists
+    const existingUser = await storage.getUserByEmail(email);
+    if (existingUser) return res.status(400).json({ error: "User already exists" });
 
-      const user = await storage.createUser({ email, password, role: "student" }); // Make sure this sets auth_provider
-      (req.session as any).userId = user.id;
-
-      await storage.createStudent({
-        id: uuidv4(),
-        user_id: user.id,
-        name: name || "",
-        phone: "",
-        skill_level: "",
-        preferences: ""
-      });
-
-      res.json({ user: { id: user.id, email: user.email, role: user.role } });
-    } catch (err) {
-      console.error("Registration error:", err, err?.message, err?.details);
-      res.status(400).json({ error: "Registration failed" });
+    // 2) zxcvbn score (server-side)
+    const z = zxcvbn(password, [email, name]);
+    const minScore = 3; // require >= 3 (Good)
+    if (z.score < minScore) {
+      return res.status(400).json({ error: "Password too weak", details: z.feedback });
     }
-  });
+
+    // 3) Have I Been Pwned check (k-anonymity)
+    const pwnedCount = await checkPwnedCount(password);
+    if (pwnedCount > 0) {
+      return res.status(400).json({
+        error: `This password has been seen in ${pwnedCount} breaches. Choose a different password.`,
+      });
+    }
+
+    // 4) Optional: check against your banned/common password list (not included here)
+    // 5) Hash the password using Argon2id
+    const passwordHash = await argon2.hash(password, {
+      type: argon2.argon2id,
+      timeCost: 3,
+      memoryCost: 1 << 16, // 64 MB
+      parallelism: 1,
+    });
+
+    // 6) Create user record with hashed password (use storage helper)
+    // We'll add createUserWithHash to storage to avoid changing existing createUser behavior.
+    const user = await storage.createUserWithHashedPassword({
+      id: uuidv4(),
+      email,
+      password_hash: passwordHash,
+      role: "student",
+      auth_provider: "password",
+    });
+
+    // 7) Create student record (existing flow) - ensure student.user_id receives user.id
+    await storage.createStudent({
+      id: uuidv4(),
+      user_id: user.id,
+      name: name || "",
+      phone: "",
+      skill_level: "",
+      preferences: ""
+    });
+
+    // Save session
+    (req.session as any).userId = user.id;
+
+    res.status(201).json({ user: { id: user.id, email: user.email, role: user.role } });
+  } catch (err: any) {
+    console.error("Registration error (secure):", err);
+    res.status(400).json({ error: err.message || "Registration failed" });
+  }
+});
 
   app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
@@ -679,29 +724,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/objects/upload", isAuthenticated, async (req, res) => {
-    try {
-      const { filename, contentType } = req.body;
-      if (!filename || !contentType) {
-        return res.status(400).json({ error: "filename and contentType required" });
-      }
-
-      const { data, error } = await supabase.storage
-        .from("profile-images")
-        .createSignedUploadUrl(filename, { contentType });
-
-      if (error) throw error;
-
-      res.json({
-        uploadURL: data.signedUrl,
-        path: data.path,
-      });
-    } catch (err: any) {
-      console.error("Error getting Supabase upload URL:", err);
-      res.status(500).json({ error: err.message });
+app.get("/objects/:objectPath(*)", async (req, res) => {
+  try {
+    // NOTE: use req.params.objectPath (wildcard) — not req.path — so the object key doesn't include the "/objects/" prefix
+    const objectPath = req.params.objectPath;
+    if (!objectPath) {
+      return res.status(400).send("Missing object path");
     }
-  });
 
+    // Log for debugging — remove in production
+    console.log("GET /objects requested for objectPath:", objectPath);
+
+    // Use the same bucket name you upload into (your upload used "profile-images")
+    const bucket = process.env.SUPABASE_BUCKET || "profile-images";
+
+    // Create a short-lived signed URL so the browser can fetch directly from Supabase storage.
+    // Keep this short (e.g. 60s) because we redirect immediately and the browser will request it.
+    const expiresInSeconds = 60;
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(objectPath, expiresInSeconds);
+
+    if (error) {
+      console.error("Failed to create signed URL for", objectPath, error);
+      // If the object isn't present, return 404 so frontend can show fallback image
+      return res.status(404).send("Object not found");
+    }
+
+    if (!data?.signedURL) {
+      console.error("createSignedUrl returned no signedURL for", objectPath, data);
+      return res.status(500).send("Failed to create signed URL");
+    }
+
+    // Redirect the browser to the signed URL so it can fetch the file directly from Supabase
+    return res.redirect(data.signedURL);
+  } catch (err) {
+    console.error("Error serving object:", err);
+    return res.status(500).send("Server error");
+  }
+});
   // -----------------------------
   // MESSAGING ROUTES
   // -----------------------------

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,43 +7,86 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Eye, EyeOff, Mail, Lock, User } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-
+import zxcvbn from "zxcvbn";
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  // remove onAuth, we'll handle internally
 }
 export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
-  const { login, refreshUser } = useAuth(); 
+  const { login, refreshUser } = useAuth();
 
   const [showPassword, setShowPassword] = useState(false);
   const [loginData, setLoginData] = useState({ email: "", password: "" });
-  const [signupData, setSignupData] = useState({ 
-    name: "", 
-    email: "", 
-    password: "", 
-    confirmPassword: "" 
+  const [signupData, setSignupData] = useState({
+    name: "",
+    email: "",
+    password: "",
+    confirmPassword: ""
   });
   const [error, setError] = useState<string | null>(null);
 
- const handleLogin = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setError(null);
+  // Password strength states
+  const [pwScore, setPwScore] = useState<number>(0); // 0..4
+  const [pwFeedback, setPwFeedback] = useState<string | null>(null);
+  const minAcceptableScore = 3; // require 3+ (Good/Excellent)
 
-  const success = await login(loginData.email, loginData.password);
-  if (success) {
-    onClose();
-  } else {
-    setError("Login failed. Check your email/password.");
-  }
-};
+  useEffect(() => {
+    if (!signupData.password) {
+      setPwScore(0);
+      setPwFeedback(null);
+      return;
+    }
+    try {
+      const res = zxcvbn(signupData.password, [signupData.email, signupData.name]);
+      setPwScore(res.score);
+      const advice = res.feedback?.warning ? res.feedback.warning : (res.feedback?.suggestions?.join(" ") || null);
+      setPwFeedback(advice);
+    } catch (err) {
+      // if zxcvbn fails for any reason, default to 0
+      setPwScore(0);
+      setPwFeedback(null);
+    }
+  }, [signupData.password, signupData.email, signupData.name]);
+
+  const scoreLabel = (score: number) => {
+    switch (score) {
+      case 0:
+        return { label: "Very weak", color: "bg-red-500", pct: 20 };
+      case 1:
+        return { label: "Weak", color: "bg-orange-500", pct: 40 };
+      case 2:
+        return { label: "Fair", color: "bg-yellow-400", pct: 60 };
+      case 3:
+        return { label: "Good", color: "bg-green-500", pct: 80 };
+      case 4:
+        return { label: "Excellent", color: "bg-green-700", pct: 100 };
+      default:
+        return { label: "Very weak", color: "bg-red-500", pct: 0 };
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    const success = await login(loginData.email, loginData.password);
+    if (success) {
+      onClose();
+    } else {
+      setError("Login failed. Check your email/password.");
+    }
+  };
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     if (signupData.password !== signupData.confirmPassword) {
       setError("Passwords don't match");
+      return;
+    }
+    if (pwScore < minAcceptableScore) {
+      setError("Password is too weak. Please choose a stronger password.");
       return;
     }
     try {
@@ -60,7 +103,9 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
       const data = await res.json();
       if (res.ok) {
         onClose();
-        window.location.reload(); // or update auth state
+        // refresh auth state in context
+        await refreshUser();
+        // optionally you can navigate or show a success toast
       } else {
         setError(data.error || "Signup failed");
       }
@@ -200,6 +245,21 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+
+                {/* Strength meter */}
+                <div className="mt-3">
+                  <div className="w-full bg-gray-200 h-2 rounded">
+                    <div
+                      style={{ width: `${scoreLabel(pwScore).pct}%` }}
+                      className={`${scoreLabel(pwScore).color} h-2 rounded`}
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                    <span>{scoreLabel(pwScore).label}</span>
+                    <span>{pwScore < minAcceptableScore ? "Password too weak" : "OK"}</span>
+                  </div>
+                  {pwFeedback && <div className="text-xs text-muted-foreground mt-1">{pwFeedback}</div>}
+                </div>
               </div>
 
               <div>
@@ -223,7 +283,12 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
                 <div className="text-red-500 text-sm text-center">{error}</div>
               )}
 
-              <Button type="submit" className="w-full" data-testid="button-signup-submit">
+              <Button
+                type="submit"
+                className="w-full"
+                data-testid="button-signup-submit"
+                disabled={pwScore < minAcceptableScore || signupData.password !== signupData.confirmPassword}
+              >
                 Create Account
               </Button>
             </form>
@@ -243,7 +308,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
           <div className="grid grid-cols-2 gap-3">
             {/* Google Sign In */}
             <a href="http://localhost:5000/api/auth/google" style={{ display: "block" }}>
-              <Button 
+              <Button
                 variant="outline"
                 className="w-full"
                 data-testid="button-login-google"
@@ -259,7 +324,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
               </Button>
             </a>
             {/* Apple Sign In placeholder */}
-            <Button 
+            <Button
               variant="outline"
               className="w-full"
               onClick={() => alert("Apple sign-in coming soon!")}

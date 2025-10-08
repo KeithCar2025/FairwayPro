@@ -8,12 +8,14 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { supabase } from "./supabaseClient"; // ensure this matches your client filename
 import passport from "passport";
+import helmet from "helmet";
 
 const PgSession = ConnectPgSimple(session);
 const app = express();
 
 // --- Essential Middleware ---
 app.use(express.json());
+app.use(helmet());
 app.use(express.urlencoded({ extended: false }));
 
 // --- CORS: Allow frontend to send cookies for session auth ---

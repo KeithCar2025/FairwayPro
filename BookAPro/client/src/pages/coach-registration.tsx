@@ -1,50 +1,53 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import zxcvbn from "zxcvbn";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { X, Plus, Upload, MapPin, DollarSign, Award, Camera, Star } from "lucide-react";
+import { X, Plus, MapPin, DollarSign, Award, Star } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
-import { ObjectUploader } from "@/components/ObjectUploader";
-import type { UploadResult } from "@uppy/core";
 import LocationAutocomplete from "@/components/LocationAutocomplete";
 
-// Validation schema for coach registration
-const coachRegistrationSchema = z.object({
-email: z.string().email("Invalid email address"),
-  password: z.string().min(4, "Password must be at least 6 characters"),
-  name: z.string().min(2, "Name must be at least 2 characters"),
-  bio: z.string().min(50, "Bio must be at least 50 characters").max(500, "Bio must be less than 500 characters"),
-  location: z.string().min(3, "Location is required"),
-  pricePerHour: z.coerce.number().min(25, "Minimum price is $25").max(500, "Maximum price is $500"),
-  yearsExperience: z.coerce.number().min(1, "At least 1 year of experience required").max(50, "Maximum 50 years"),
-  pgaCertificationId: z.string().min(3, "PGA certification/ID is required").max(50, "PGA certification/ID must be less than 50 characters"),
-  responseTime: z.string().min(1, "Response time is required"),
-  availability: z.string().min(1, "Availability is required"),
-  googleReviewsUrl: z.string().url("Please enter a valid Google Reviews URL").optional().or(z.literal("")),
-  image: z.string().optional().default(""),
-  latitude: z.coerce.number().optional(),
-  longitude: z.coerce.number().optional(),
-});
+// Validation schema for coach registration (includes email, password, confirmPassword)
+const coachRegistrationSchema = z
+  .object({
+    email: z.string().email("Invalid email address"),
+    password: z.string().min(8, "Password must be at least 8 characters"),
+    confirmPassword: z.string().min(8, "Confirm password must be at least 8 characters"),
+    name: z.string().min(2, "Name must be at least 2 characters"),
+    bio: z.string().min(50, "Bio must be at least 50 characters").max(500, "Bio must be less than 500 characters"),
+    location: z.string().min(3, "Location is required"),
+    pricePerHour: z.coerce.number().min(25, "Minimum price is $25").max(500, "Maximum price is $500"),
+    yearsExperience: z.coerce.number().min(1, "At least 1 year of experience required").max(50, "Maximum 50 years"),
+    pgaCertificationId: z.string().min(3, "PGA certification/ID is required").max(50, "PGA certification/ID must be less than 50 characters"),
+    responseTime: z.string().min(1, "Response time is required"),
+    availability: z.string().min(1, "Availability is required"),
+    googleReviewsUrl: z.string().url("Please enter a valid Google Reviews URL").optional().or(z.literal("")),
+    latitude: z.coerce.number().optional(),
+    longitude: z.coerce.number().optional(),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "Passwords do not match",
+  });
 
 type CoachRegistrationForm = z.infer<typeof coachRegistrationSchema>;
 
 // Predefined options
 const GOLF_SPECIALTIES = [
   "Swing Analysis", "Putting", "Short Game", "Course Strategy", "Mental Game",
-  "Beginner Instruction", "Advanced Techniques", "Junior Programs", 
+  "Beginner Instruction", "Advanced Techniques", "Junior Programs",
   "Tournament Prep", "Fitness Training", "Injury Prevention", "Golf Etiquette"
 ];
 
@@ -69,7 +72,7 @@ const RESPONSE_TIMES = [
 ];
 
 const AVAILABILITY_OPTIONS = [
-  "Available today", "Available this week", "Available next week", 
+  "Available today", "Available this week", "Available next week",
   "Available weekdays", "Available weekends", "Available evenings",
   "By appointment only"
 ];
@@ -81,319 +84,154 @@ export default function CoachRegistration() {
   const [selectedSpecialties, setSelectedSpecialties] = useState<string[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [selectedCertifications, setSelectedCertifications] = useState<string[]>([]);
-  const [videos, setVideos] = useState<Array<{
-    title: string;
-    description: string;
-    thumbnail: string;
-    duration: string;
-    videoUrl: string;
-    isUploadingVideo: boolean;
-    isUploadingThumbnail: boolean;
-  }>>([]);
-  const [profileImageUrl, setProfileImageUrl] = useState<string>("");
-  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [profileImageUrl] = useState<string>(""); // kept for form field but upload removed from registration
 
-const form = useForm<CoachRegistrationForm & { email: string; password: string }>({
-  resolver: zodResolver(coachRegistrationSchema),
-  defaultValues: {
-    email: "",
-    password: "",
-    name: "",
-    bio: "",
-    location: "",
-    pricePerHour: 75,
-    yearsExperience: 5,
-    pgaCertificationId: "",
-    responseTime: "Within 24 hours",
-    availability: "Available this week",
-    googleReviewsUrl: "",
-    image: profileImageUrl,
-    latitude: undefined,
-    longitude: undefined,
-  },
-});
+  // Password strength states
+  const [pwScore, setPwScore] = useState<number>(0); // 0..4
+  const [pwFeedback, setPwFeedback] = useState<string | null>(null);
+  const minAcceptableScore = 3; // require 3+ (Good/Excellent)
+
+  const form = useForm<CoachRegistrationForm>({
+    resolver: zodResolver(coachRegistrationSchema),
+    defaultValues: {
+      email: "",
+      password: "",
+      confirmPassword: "",
+      name: "",
+      bio: "",
+      location: "",
+      pricePerHour: 75,
+      yearsExperience: 5,
+      pgaCertificationId: "",
+      responseTime: "Within 24 hours",
+      availability: "Available this week",
+      googleReviewsUrl: "",
+      latitude: undefined,
+      longitude: undefined,
+    },
+  });
+
+  // Watch password field for strength scoring
+  useEffect(() => {
+    const pwd = form.getValues("password") || "";
+    const name = form.getValues("name") || "";
+    const email = form.getValues("email") || "";
+    if (!pwd) {
+      setPwScore(0);
+      setPwFeedback(null);
+      return;
+    }
+    try {
+      const res = zxcvbn(pwd, [email, name]);
+      setPwScore(res.score);
+      const advice = res.feedback?.warning ? res.feedback.warning : (res.feedback?.suggestions?.join(" ") || null);
+      setPwFeedback(advice);
+    } catch (err) {
+      setPwScore(0);
+      setPwFeedback(null);
+    }
+  }, [form.watch("password"), form.watch("email"), form.watch("name")]); // react-hook-form's watch() triggers updates
 
   // Coach registration mutation
-const registerCoachMutation = useMutation({
-  mutationFn: async (data: any) => {
-    const response = await fetch('/api/coaches/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-      credentials: 'include',
-    });
+  const registerCoachMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const response = await fetch('/api/coaches/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+        credentials: 'include',
+      });
 
-    const result = await response.json();
-    console.log("Backend response:", result, "Status:", response.status);
-	if (!response.ok) {
-  console.error('Non-2xx response:', response.status, result);
-}
+      const result = await response.json();
+      if (!response.ok) {
+        console.error('Non-2xx response:', response.status, result);
+        throw new Error(result.error || 'Registration failed');
+      }
+      if (typeof result.error === 'string' && result.error) {
+        throw new Error(result.error);
+      }
+      return result;
+    },
 
-    // Throw only if server returns an error
-if (!response.ok) {
-  throw new Error(result.error || 'Registration failed');
-}
-if (typeof result.error === 'string' && result.error) {
-  throw new Error(result.error);
-}
-
-    return result;
-  },
-
-onSuccess: (data: any) => {
-      console.log("Mutation success:", data);
-
-      // Show toast before navigation
+    onSuccess: (data: any) => {
       toast({
         title: "Registration Submitted!",
         description: data.message || "Your coach profile is pending admin approval. You will be notified once approved.",
         duration: 5000,
       });
 
-      // Use SPA navigation so the toast persists after navigation
       setTimeout(() => {
-        setLocation("/"); // Wouter SPA navigation, doesn't reload the page
-      }, 1200); // Give user ~1s to see the toast before navigating
+        setLocation("/");
+      }, 1200);
 
+      queryClient.invalidateQueries({ queryKey: ['/api/coaches/search'] });
+    },
 
-    queryClient.invalidateQueries({ queryKey: ['/api/coaches/search'] });
-  },
+    onError: (error: Error) => {
+      console.error("Mutation error:", error);
+      toast({
+        title: "Registration Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
 
-  onError: (error: Error) => {
-    console.error("Mutation error:", error);
-    toast({
-      title: "Registration Failed",
-      description: error.message,
-      variant: "destructive",
-    });
-  },
-});
+  const handleSubmit = async (data: CoachRegistrationForm) => {
+    // enforce client-side zxcvbn threshold before sending
+    if (pwScore < minAcceptableScore) {
+      toast({ title: "Weak password", description: "Please choose a stronger password before submitting.", variant: "destructive" });
+      return;
+    }
 
-const handleSubmit = async (data: CoachRegistrationForm & { email: string; password: string }) => {
-  console.log("Form submitted:", data);
-  const completeData = {
-    email: data.email,
-    password: data.password,
-    ...data,
-    specialties: selectedSpecialties,
-    tools: selectedTools,
-    certifications: selectedCertifications,
-    videos: videos,
-    image: profileImageUrl,
+    const completeData = {
+      email: data.email,
+      password: data.password,
+      name: data.name,
+      bio: data.bio,
+      location: data.location,
+      pricePerHour: data.pricePerHour,
+      yearsExperience: data.yearsExperience,
+      pgaCertificationId: data.pgaCertificationId,
+      responseTime: data.responseTime,
+      availability: data.availability,
+      googleReviewsUrl: data.googleReviewsUrl || "",
+      specialties: selectedSpecialties,
+      tools: selectedTools,
+      certifications: selectedCertifications,
+      image: profileImageUrl || "",
+      latitude: data.latitude,
+      longitude: data.longitude,
+    };
+
+    registerCoachMutation.mutate(completeData);
   };
-
-  registerCoachMutation.mutate(completeData);
-};
-
-
 
   const addSpecialty = (specialty: string) => {
     if (!selectedSpecialties.includes(specialty)) {
       setSelectedSpecialties([...selectedSpecialties, specialty]);
     }
   };
-
-  const removeSpecialty = (specialty: string) => {
-    setSelectedSpecialties(selectedSpecialties.filter(s => s !== specialty));
-  };
-
+  const removeSpecialty = (specialty: string) => setSelectedSpecialties(selectedSpecialties.filter(s => s !== specialty));
   const addTool = (tool: string) => {
-    if (!selectedTools.includes(tool)) {
-      setSelectedTools([...selectedTools, tool]);
+    if (!selectedTools.includes(tool)) setSelectedTools([...selectedTools, tool]);
+  };
+  const removeTool = (tool: string) => setSelectedTools(selectedTools.filter(t => t !== tool));
+  const addCertification = (cert: string) => {
+    if (!selectedCertifications.includes(cert)) setSelectedCertifications([...selectedCertifications, cert]);
+  };
+  const removeCertification = (cert: string) => setSelectedCertifications(selectedCertifications.filter(c => c !== cert));
+
+  // Helper for strength label/colors
+  const scoreLabel = (score: number) => {
+    switch (score) {
+      case 0: return { label: "Very weak", color: "bg-red-500", pct: 20 };
+      case 1: return { label: "Weak", color: "bg-orange-500", pct: 40 };
+      case 2: return { label: "Fair", color: "bg-yellow-400", pct: 60 };
+      case 3: return { label: "Good", color: "bg-green-500", pct: 80 };
+      case 4: return { label: "Excellent", color: "bg-green-700", pct: 100 };
+      default: return { label: "Very weak", color: "bg-red-500", pct: 0 };
     }
-  };
-
-  const removeTool = (tool: string) => {
-    setSelectedTools(selectedTools.filter(t => t !== tool));
-  };
-
-  const addCertification = (certification: string) => {
-    if (!selectedCertifications.includes(certification)) {
-      setSelectedCertifications([...selectedCertifications, certification]);
-    }
-  };
-
-  const removeCertification = (certification: string) => {
-    setSelectedCertifications(selectedCertifications.filter(c => c !== certification));
-  };
-
-  const addVideo = () => {
-    setVideos([...videos, {
-      title: "",
-      description: "",
-      thumbnail: "",
-      duration: "0:00",
-      videoUrl: "",
-      isUploadingVideo: false,
-      isUploadingThumbnail: false
-    }]);
-  };
-
-  const removeVideo = (index: number) => {
-    setVideos(videos.filter((_, i) => i !== index));
-  };
-
-  const updateVideo = (index: number, field: string, value: string) => {
-    const updatedVideos = videos.map((video, i) => 
-      i === index ? { ...video, [field]: value } : video
-    );
-    setVideos(updatedVideos);
-  };
-
-  // Handle profile image upload
-  const handleGetUploadParameters = async () => {
-    const response = await fetch('/api/objects/upload', {
-      method: 'POST',
-      credentials: 'include',
-    });
-    
-    if (!response.ok) {
-      throw new Error('Failed to get upload URL');
-    }
-    
-    const { uploadURL } = await response.json();
-    return {
-      method: 'PUT' as const,
-      url: uploadURL,
-    };
-  };
-
-  const handleImageUploadComplete = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
-    setIsUploadingImage(false);
-    if (result.successful && result.successful.length > 0) {
-      const uploadedFile = result.successful[0];
-      const uploadUrl = uploadedFile.uploadURL;
-      
-      if (uploadUrl) {
-        try {
-          // Normalize the upload URL to a proper object path and set ACL
-          const response = await fetch('/api/objects/normalize-profile-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ imageURL: uploadUrl })
-          });
-          
-          if (response.ok) {
-            const { objectPath } = await response.json();
-            setProfileImageUrl(objectPath);
-            form.setValue('image', objectPath, { shouldValidate: true });
-setProfileImageUrl(objectPath);
-            toast({
-              title: "Profile Image Uploaded",
-              description: "Your profile image has been uploaded successfully.",
-            });
-          } else {
-            throw new Error('Failed to process uploaded image');
-          }
-        } catch (error) {
-          console.error('Error processing uploaded image:', error);
-          toast({
-            title: "Upload Processing Failed",
-            description: "There was an error processing your uploaded image. Please try again.",
-            variant: "destructive",
-          });
-        }
-      }
-    }
-  };
-
-  // Handle video file upload
-  const handleVideoUpload = (videoIndex: number) => async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
-    const updatedVideos = [...videos];
-    updatedVideos[videoIndex].isUploadingVideo = false;
-    
-    if (result.successful && result.successful.length > 0) {
-      const uploadedFile = result.successful[0];
-      const uploadUrl = uploadedFile.uploadURL;
-      
-      if (uploadUrl) {
-        try {
-          // Normalize the upload URL to a proper object path and set ACL for videos
-          const response = await fetch('/api/objects/normalize-video', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ videoURL: uploadUrl })
-          });
-          
-          if (response.ok) {
-            const { objectPath } = await response.json();
-            updatedVideos[videoIndex].videoUrl = objectPath;
-            toast({
-              title: "Video Uploaded",
-              description: "Your instructional video has been uploaded successfully.",
-            });
-          } else {
-            throw new Error('Failed to process uploaded video');
-          }
-        } catch (error) {
-          console.error('Error processing uploaded video:', error);
-          toast({
-            title: "Video Processing Failed",
-            description: "There was an error processing your uploaded video. Please try again.",
-            variant: "destructive",
-          });
-        }
-      }
-    }
-    
-    setVideos(updatedVideos);
-  };
-
-  // Handle thumbnail upload for videos
-  const handleThumbnailUpload = (videoIndex: number) => async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
-    const updatedVideos = [...videos];
-    updatedVideos[videoIndex].isUploadingThumbnail = false;
-    
-    if (result.successful && result.successful.length > 0) {
-      const uploadedFile = result.successful[0];
-      const uploadUrl = uploadedFile.uploadURL;
-      
-      if (uploadUrl) {
-        try {
-          // Normalize the upload URL to a proper object path and set ACL for thumbnails
-          const response = await fetch('/api/objects/normalize-thumbnail', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ thumbnailURL: uploadUrl })
-          });
-          
-          if (response.ok) {
-            const { objectPath } = await response.json();
-            updatedVideos[videoIndex].thumbnail = objectPath;
-            toast({
-              title: "Thumbnail Uploaded",
-              description: "Video thumbnail has been uploaded successfully.",
-            });
-          } else {
-            throw new Error('Failed to process uploaded thumbnail');
-          }
-        } catch (error) {
-          console.error('Error processing uploaded thumbnail:', error);
-          toast({
-            title: "Thumbnail Processing Failed",
-            description: "There was an error processing your uploaded thumbnail. Please try again.",
-            variant: "destructive",
-          });
-        }
-      }
-    }
-    
-    setVideos(updatedVideos);
-  };
-
-  const startVideoUpload = (index: number) => {
-    const updatedVideos = [...videos];
-    updatedVideos[index].isUploadingVideo = true;
-    setVideos(updatedVideos);
-  };
-
-  const startThumbnailUpload = (index: number) => {
-    const updatedVideos = [...videos];
-    updatedVideos[index].isUploadingThumbnail = true;
-    setVideos(updatedVideos);
   };
 
   return (
@@ -407,8 +245,7 @@ setProfileImageUrl(objectPath);
             </p>
           </div>
 
-
-            <Form {...form} onSubmit={form.handleSubmit(handleSubmit)}>
+          <Form {...form} onSubmit={form.handleSubmit(handleSubmit)}>
             <Tabs value={currentTab} onValueChange={setCurrentTab} className="w-full">
               <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="profile">Profile</TabsTrigger>
@@ -417,135 +254,127 @@ setProfileImageUrl(objectPath);
                 <TabsTrigger value="content">Content</TabsTrigger>
               </TabsList>
 
-                <TabsContent value="profile" className="mt-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <Camera className="w-5 h-5" />
-                        Basic Profile
-                      </CardTitle>
-                      <CardDescription>
-                        Tell students about yourself and your coaching style
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-					<FormField
-  control={form.control}
-  name="email"
-  render={({ field }) => (
-    <FormItem>
-      <FormLabel>Email *</FormLabel>
-      <FormControl>
-        <Input placeholder="you@example.com" {...field} />
-      </FormControl>
-      <FormMessage />
-    </FormItem>
-  )}
-/>
+              <TabsContent value="profile" className="mt-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <MapPin className="w-5 h-5" />
+                      Basic Profile
+                    </CardTitle>
+                    <CardDescription>
+                      Tell students about yourself and your coaching style
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <FormField
+                      control={form.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email *</FormLabel>
+                          <FormControl>
+                            <Input placeholder="you@example.com" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
-<FormField
-  control={form.control}
-  name="password"
-  render={({ field }) => (
-    <FormItem>
-      <FormLabel>Password *</FormLabel>
-      <FormControl>
-        <Input type="password" placeholder="********" {...field} />
-      </FormControl>
-      <FormMessage />
-    </FormItem>
-  )}
-/>
-                      <FormField
-                        control={form.control}
-                        name="name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Full Name *</FormLabel>
-                            <FormControl>
-                              <Input placeholder="John Smith" {...field} data-testid="input-name" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="bio"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Bio * (50-500 characters)</FormLabel>
-                            <FormControl>
-                              <Textarea
-                                placeholder="Tell potential students about your teaching philosophy, experience, and what makes you unique..."
-                                className="min-h-24"
-                                {...field}
-                                data-testid="textarea-bio"
+                    <FormField
+                      control={form.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Password *</FormLabel>
+                          <FormControl>
+                            <Input type="password" placeholder="Create a password" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                          <div className="mt-3">
+                            <div className="w-full bg-gray-200 h-2 rounded">
+                              <div
+                                style={{ width: `${scoreLabel(pwScore).pct}%` }}
+                                className={`${scoreLabel(pwScore).color} h-2 rounded`}
                               />
-                            </FormControl>
-                            <div className="text-sm text-muted-foreground">
-                              {field.value?.length || 0}/500 characters
                             </div>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                              <span>{scoreLabel(pwScore).label}</span>
+                              <span>{pwScore < minAcceptableScore ? "Password too weak" : "OK"}</span>
+                            </div>
+                            {pwFeedback && <div className="text-xs text-muted-foreground mt-1">{pwFeedback}</div>}
+                          </div>
+                        </FormItem>
+                      )}
+                    />
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-<FormField
-  control={form.control}
-  name="location"
-  render={({ field }) => (
-    <FormItem>
-      <FormLabel className="flex items-center gap-2">
-        <MapPin className="w-4 h-4" />
-        Location *
-      </FormLabel>
-      <FormControl>
-        <LocationAutocomplete
-          value={field.value}
-          onChange={(locObj) => {
-            field.onChange(locObj.location); // sets the location string
-            form.setValue("latitude", locObj.latitude, { shouldValidate: true });
-            form.setValue("longitude", locObj.longitude, { shouldValidate: true });
-          }}
-        />
-      </FormControl>
-      <FormMessage />
-    </FormItem>
-  )}
-/>
+                    <FormField
+                      control={form.control}
+                      name="confirmPassword"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Confirm Password *</FormLabel>
+                          <FormControl>
+                            <Input type="password" placeholder="Repeat password" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
-                        <FormField
-                          control={form.control}
-                          name="yearsExperience"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Years Experience *</FormLabel>
-                              <FormControl>
-                                <Input type="number" min="1" max="50" {...field} data-testid="input-experience" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
+                    <FormField
+                      control={form.control}
+                      name="name"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Full Name *</FormLabel>
+                          <FormControl>
+                            <Input placeholder="John Smith" {...field} data-testid="input-name" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
+                    <FormField
+                      control={form.control}
+                      name="bio"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Bio * (50-500 characters)</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              placeholder="Tell potential students about your teaching philosophy, experience, and what makes you unique..."
+                              className="min-h-24"
+                              {...field}
+                              data-testid="textarea-bio"
+                            />
+                          </FormControl>
+                          <div className="text-sm text-muted-foreground">
+                            {field.value?.length || 0}/500 characters
+                          </div>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
-                        name="pgaCertificationId"
+                        name="location"
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel className="flex items-center gap-2">
-                              <Award className="w-4 h-4" />
-                              PGA Certification/ID *
+                              <MapPin className="w-4 h-4" />
+                              Location *
                             </FormLabel>
                             <FormControl>
-                              <Input 
-                                placeholder="Enter your PGA certification number or ID" 
-                                {...field} 
-                                data-testid="input-pga-certification" 
+                              <LocationAutocomplete
+                                value={field.value}
+                                onChange={(locObj) => {
+                                  field.onChange(locObj.location);
+                                  form.setValue("latitude", locObj.latitude, { shouldValidate: true });
+                                  form.setValue("longitude", locObj.longitude, { shouldValidate: true });
+                                }}
                               />
                             </FormControl>
                             <FormMessage />
@@ -553,63 +382,75 @@ setProfileImageUrl(objectPath);
                         )}
                       />
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <FormField
-                          control={form.control}
-                          name="pricePerHour"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="flex items-center gap-2">
-                                <DollarSign className="w-4 h-4" />
-                                Price per Hour *
-                              </FormLabel>
-                              <FormControl>
-                                <Input type="number" min="25" max="500" {...field} data-testid="input-price" />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                      <FormField
+                        control={form.control}
+                        name="yearsExperience"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Years Experience *</FormLabel>
+                            <FormControl>
+                              <Input type="number" min="1" max="50" {...field} data-testid="input-experience" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
 
-                        <FormField
-                          control={form.control}
-                          name="responseTime"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Response Time *</FormLabel>
-                              <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                <FormControl>
-                                  <SelectTrigger data-testid="select-response-time">
-                                    <SelectValue placeholder="Select response time" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  {RESPONSE_TIMES.map((time) => (
-                                    <SelectItem key={time} value={time}>{time}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
+                    <FormField
+                      control={form.control}
+                      name="pgaCertificationId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="flex items-center gap-2">
+                            <Award className="w-4 h-4" />
+                            PGA Certification/ID *
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="Enter your PGA certification number or ID"
+                              {...field}
+                              data-testid="input-pga-certification"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="pricePerHour"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="flex items-center gap-2">
+                              <DollarSign className="w-4 h-4" />
+                              Price per Hour *
+                            </FormLabel>
+                            <FormControl>
+                              <Input type="number" min="25" max="500" {...field} data-testid="input-price" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
                       <FormField
                         control={form.control}
-                        name="availability"
+                        name="responseTime"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>General Availability *</FormLabel>
+                            <FormLabel>Response Time *</FormLabel>
                             <Select onValueChange={field.onChange} defaultValue={field.value}>
                               <FormControl>
-                                <SelectTrigger data-testid="select-availability">
-                                  <SelectValue placeholder="Select availability" />
+                                <SelectTrigger data-testid="select-response-time">
+                                  <SelectValue placeholder="Select response time" />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                {AVAILABILITY_OPTIONS.map((availability) => (
-                                  <SelectItem key={availability} value={availability}>{availability}</SelectItem>
+                                {RESPONSE_TIMES.map((time) => (
+                                  <SelectItem key={time} value={time}>{time}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -617,108 +458,99 @@ setProfileImageUrl(objectPath);
                           </FormItem>
                         )}
                       />
+                    </div>
 
-                      <FormField
-                        control={form.control}
-                        name="googleReviewsUrl"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="flex items-center gap-2">
-                              <Star className="w-4 h-4" />
-                              Google Reviews URL (Optional)
-                            </FormLabel>
+                    <FormField
+                      control={form.control}
+                      name="availability"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>General Availability *</FormLabel>
+                          <Select onValueChange={field.onChange} defaultValue={field.value}>
                             <FormControl>
-                              <Input 
-                                placeholder="https://g.page/r/your-business-name/review" 
-                                {...field} 
-                                data-testid="input-google-reviews-url"
-                              />
+                              <SelectTrigger data-testid="select-availability">
+                                <SelectValue placeholder="Select availability" />
+                              </SelectTrigger>
                             </FormControl>
-                            <div className="text-sm text-muted-foreground">
-                              Link your Google Business profile reviews to show your star rating and attract more students
-                            </div>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                            <SelectContent>
+                              {AVAILABILITY_OPTIONS.map((availability) => (
+                                <SelectItem key={availability} value={availability}>{availability}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
-                      {/* Profile Image Upload Section */}
-                      <div className="space-y-3">
-                        <Label className="text-base font-medium">Profile Photo</Label>
-                        <div className="flex items-center space-x-4">
-                          <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center overflow-hidden">
-                            {profileImageUrl ? (
-                              <img 
-                                src={profileImageUrl} 
-                                alt="Profile preview" 
-                                className="w-full h-full object-cover"
+                    <FormField
+                      control={form.control}
+                      name="googleReviewsUrl"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="flex items-center gap-2">
+                            <Star className="w-4 h-4" />
+                            Google Reviews URL (Optional)
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="https://g.page/r/your-business-name/review"
+                              {...field}
+                              data-testid="input-google-reviews-url"
+                            />
+                          </FormControl>
+                          <div className="text-sm text-muted-foreground">
+                            Link your Google Business profile reviews to show your star rating and attract more students
+                          </div>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* Removed profile image uploader from registration.
+                        Images and videos are handled in the profile editor post-approval. */}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="expertise" className="mt-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Award className="w-5 h-5" />
+                      Teaching Specialties
+                    </CardTitle>
+                    <CardDescription>
+                      Select the areas where you excel as a golf instructor
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      <div>
+                        <Label className="text-base font-medium">Selected Specialties</Label>
+                        <div className="flex flex-wrap gap-2 mt-2 min-h-12">
+                          {selectedSpecialties.map((specialty) => (
+                            <Badge key={specialty} variant="default" className="flex items-center gap-1">
+                              {specialty}
+                              <X
+                                className="w-3 h-3 cursor-pointer"
+                                onClick={() => removeSpecialty(specialty)}
                               />
-                            ) : (
-                              <Camera className="w-8 h-8 text-muted-foreground" />
-                            )}
-                          </div>
-                          <div className="flex-1">
-                            <ObjectUploader
-                              maxNumberOfFiles={1}
-                              maxFileSize={5242880} // 5MB
-                              onGetUploadParameters={handleGetUploadParameters}
-                              onComplete={handleImageUploadComplete}
-                              buttonClassName="w-full sm:w-auto"
-                            >
-                              <Upload className="w-4 h-4 mr-2" />
-                              {profileImageUrl ? 'Change Photo' : 'Upload Photo'}
-                            </ObjectUploader>
-                            <p className="text-sm text-muted-foreground mt-1">
-                              JPG, PNG, GIF up to 5MB. Recommended: 400x400px
+                            </Badge>
+                          ))}
+                          {selectedSpecialties.length === 0 && (
+                            <p className="text-sm text-muted-foreground flex items-center">
+                              No specialties selected yet
                             </p>
-                            {isUploadingImage && (
-                              <p className="text-sm text-primary mt-1">Uploading...</p>
-                            )}
-                          </div>
+                          )}
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
-                </TabsContent>
 
-                <TabsContent value="expertise" className="mt-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <Award className="w-5 h-5" />
-                        Teaching Specialties
-                      </CardTitle>
-                      <CardDescription>
-                        Select the areas where you excel as a golf instructor
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        <div>
-                          <Label className="text-base font-medium">Selected Specialties</Label>
-                          <div className="flex flex-wrap gap-2 mt-2 min-h-12">
-                            {selectedSpecialties.map((specialty) => (
-                              <Badge key={specialty} variant="default" className="flex items-center gap-1">
-                                {specialty}
-                                <X 
-                                  className="w-3 h-3 cursor-pointer" 
-                                  onClick={() => removeSpecialty(specialty)}
-                                />
-                              </Badge>
-                            ))}
-                            {selectedSpecialties.length === 0 && (
-                              <p className="text-sm text-muted-foreground flex items-center">
-                                No specialties selected yet
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <div>
-                          <Label className="text-sm font-medium">Available Specialties</Label>
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-2">
-                            {GOLF_SPECIALTIES.filter(specialty => !selectedSpecialties.includes(specialty))
-                              .map((specialty) => (
+                      <div>
+                        <Label className="text-sm font-medium">Available Specialties</Label>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-2">
+                          {GOLF_SPECIALTIES.filter(specialty => !selectedSpecialties.includes(specialty))
+                            .map((specialty) => (
                               <Button
                                 key={specialty}
                                 type="button"
@@ -732,50 +564,49 @@ setProfileImageUrl(objectPath);
                                 {specialty}
                               </Button>
                             ))}
-                          </div>
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
-                </TabsContent>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
 
-                <TabsContent value="tools" className="mt-6">
-                  <div className="space-y-6">
-                    {/* Tools Section */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Teaching Tools & Equipment</CardTitle>
-                        <CardDescription>
-                          What technology and equipment do you use in your lessons?
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-4">
-                          <div>
-                            <Label className="text-base font-medium">Selected Tools</Label>
-                            <div className="flex flex-wrap gap-2 mt-2 min-h-12">
-                              {selectedTools.map((tool) => (
-                                <Badge key={tool} variant="secondary" className="flex items-center gap-1">
-                                  {tool}
-                                  <X 
-                                    className="w-3 h-3 cursor-pointer" 
-                                    onClick={() => removeTool(tool)}
-                                  />
-                                </Badge>
-                              ))}
-                              {selectedTools.length === 0 && (
-                                <p className="text-sm text-muted-foreground flex items-center">
-                                  No tools selected yet
-                                </p>
-                              )}
-                            </div>
+              <TabsContent value="tools" className="mt-6">
+                <div className="space-y-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Teaching Tools & Equipment</CardTitle>
+                      <CardDescription>
+                        What technology and equipment do you use in your lessons?
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+                        <div>
+                          <Label className="text-base font-medium">Selected Tools</Label>
+                          <div className="flex flex-wrap gap-2 mt-2 min-h-12">
+                            {selectedTools.map((tool) => (
+                              <Badge key={tool} variant="secondary" className="flex items-center gap-1">
+                                {tool}
+                                <X
+                                  className="w-3 h-3 cursor-pointer"
+                                  onClick={() => removeTool(tool)}
+                                />
+                              </Badge>
+                            ))}
+                            {selectedTools.length === 0 && (
+                              <p className="text-sm text-muted-foreground flex items-center">
+                                No tools selected yet
+                              </p>
+                            )}
                           </div>
+                        </div>
 
-                          <div>
-                            <Label className="text-sm font-medium">Available Tools</Label>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
-                              {GOLF_TOOLS.filter(tool => !selectedTools.includes(tool))
-                                .map((tool) => (
+                        <div>
+                          <Label className="text-sm font-medium">Available Tools</Label>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+                            {GOLF_TOOLS.filter(tool => !selectedTools.includes(tool))
+                              .map((tool) => (
                                 <Button
                                   key={tool}
                                   type="button"
@@ -789,47 +620,46 @@ setProfileImageUrl(objectPath);
                                   {tool}
                                 </Button>
                               ))}
-                            </div>
                           </div>
                         </div>
-                      </CardContent>
-                    </Card>
+                      </div>
+                    </CardContent>
+                  </Card>
 
-                    {/* Certifications Section */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Professional Certifications</CardTitle>
-                        <CardDescription>
-                          List your golf teaching certifications and qualifications
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-4">
-                          <div>
-                            <Label className="text-base font-medium">Selected Certifications</Label>
-                            <div className="flex flex-wrap gap-2 mt-2 min-h-12">
-                              {selectedCertifications.map((certification) => (
-                                <Badge key={certification} variant="default" className="flex items-center gap-1">
-                                  {certification}
-                                  <X 
-                                    className="w-3 h-3 cursor-pointer" 
-                                    onClick={() => removeCertification(certification)}
-                                  />
-                                </Badge>
-                              ))}
-                              {selectedCertifications.length === 0 && (
-                                <p className="text-sm text-muted-foreground flex items-center">
-                                  No certifications selected yet
-                                </p>
-                              )}
-                            </div>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Professional Certifications</CardTitle>
+                      <CardDescription>
+                        List your golf teaching certifications and qualifications
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+                        <div>
+                          <Label className="text-base font-medium">Selected Certifications</Label>
+                          <div className="flex flex-wrap gap-2 mt-2 min-h-12">
+                            {selectedCertifications.map((certification) => (
+                              <Badge key={certification} variant="default" className="flex items-center gap-1">
+                                {certification}
+                                <X
+                                  className="w-3 h-3 cursor-pointer"
+                                  onClick={() => removeCertification(certification)}
+                                />
+                              </Badge>
+                            ))}
+                            {selectedCertifications.length === 0 && (
+                              <p className="text-sm text-muted-foreground flex items-center">
+                                No certifications selected yet
+                              </p>
+                            )}
                           </div>
+                        </div>
 
-                          <div>
-                            <Label className="text-sm font-medium">Available Certifications</Label>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
-                              {CERTIFICATIONS.filter(cert => !selectedCertifications.includes(cert))
-                                .map((certification) => (
+                        <div>
+                          <Label className="text-sm font-medium">Available Certifications</Label>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+                            {CERTIFICATIONS.filter(cert => !selectedCertifications.includes(cert))
+                              .map((certification) => (
                                 <Button
                                   key={certification}
                                   type="button"
@@ -843,224 +673,91 @@ setProfileImageUrl(objectPath);
                                   {certification}
                                 </Button>
                               ))}
-                            </div>
                           </div>
                         </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="content" className="mt-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <Upload className="w-5 h-5" />
-                        Instructional Videos
-                      </CardTitle>
-                      <CardDescription>
-                        Upload videos showcasing your teaching methods (optional)
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        {videos.map((video, index) => (
-                          <Card key={index}>
-                            <CardContent className="pt-4">
-                              <div className="flex items-center justify-between mb-4">
-                                <h4 className="font-medium">Video {index + 1}</h4>
-                                <Button
-                                  type="button"
-                                  variant="destructive"
-                                  size="sm"
-                                  onClick={() => removeVideo(index)}
-                                  data-testid={`button-remove-video-${index}`}
-                                >
-                                  <X className="w-4 h-4" />
-                                </Button>
-                              </div>
-                              
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                  <Label htmlFor={`video-title-${index}`}>Title</Label>
-                                  <Input
-                                    id={`video-title-${index}`}
-                                    value={video.title}
-                                    onChange={(e) => updateVideo(index, 'title', e.target.value)}
-                                    placeholder="e.g., Basic Swing Fundamentals"
-                                    data-testid={`input-video-title-${index}`}
-                                  />
-                                </div>
-                                
-                                <div>
-                                  <Label htmlFor={`video-duration-${index}`}>Duration</Label>
-                                  <Input
-                                    id={`video-duration-${index}`}
-                                    value={video.duration}
-                                    onChange={(e) => updateVideo(index, 'duration', e.target.value)}
-                                    placeholder="e.g., 3:45"
-                                    data-testid={`input-video-duration-${index}`}
-                                  />
-                                </div>
-                              </div>
-
-                              <div className="mt-4">
-                                <Label htmlFor={`video-description-${index}`}>Description</Label>
-                                <Textarea
-                                  id={`video-description-${index}`}
-                                  value={video.description}
-                                  onChange={(e) => updateVideo(index, 'description', e.target.value)}
-                                  placeholder="Describe what students will learn from this video..."
-                                  data-testid={`textarea-video-description-${index}`}
-                                />
-                              </div>
-
-                              {/* Video File Upload */}
-                              <div className="mt-4">
-                                <Label className="text-base font-medium">Video File</Label>
-                                <div className="flex items-center space-x-4 mt-2">
-                                  <div className="flex-1">
-                                    <ObjectUploader
-                                      maxNumberOfFiles={1}
-                                      maxFileSize={104857600} // 100MB for video files
-                                      onGetUploadParameters={handleGetUploadParameters}
-                                      onComplete={handleVideoUpload(index)}
-                                      buttonClassName="w-full"
-                                    >
-                                      <Upload className="w-4 h-4 mr-2" />
-                                      {video.videoUrl ? 'Change Video' : 'Upload Video'}
-                                    </ObjectUploader>
-                                    {video.isUploadingVideo && (
-                                      <p className="text-sm text-primary mt-1">Uploading video...</p>
-                                    )}
-                                    {video.videoUrl && (
-                                      <p className="text-sm text-green-600 mt-1">Video uploaded successfully</p>
-                                    )}
-                                  </div>
-                                </div>
-                                <p className="text-sm text-muted-foreground mt-1">
-                                  MP4, MOV, AVI up to 100MB. Recommended: 1080p or less for optimal streaming.
-                                </p>
-                              </div>
-
-                              {/* Thumbnail Upload */}
-                              <div className="mt-4">
-                                <Label className="text-base font-medium">Thumbnail (Optional)</Label>
-                                <div className="flex items-center space-x-4 mt-2">
-                                  <div className="w-16 h-12 bg-muted flex items-center justify-center overflow-hidden rounded">
-                                    {video.thumbnail ? (
-                                      <img 
-                                        src={video.thumbnail} 
-                                        alt="Video thumbnail" 
-                                        className="w-full h-full object-cover"
-                                      />
-                                    ) : (
-                                      <Camera className="w-6 h-6 text-muted-foreground" />
-                                    )}
-                                  </div>
-                                  <div className="flex-1">
-                                    <ObjectUploader
-                                      maxNumberOfFiles={1}
-                                      maxFileSize={5242880} // 5MB for thumbnails
-                                      onGetUploadParameters={handleGetUploadParameters}
-                                      onComplete={handleThumbnailUpload(index)}
-                                      buttonClassName="w-full"
-                                    >
-                                      <Camera className="w-4 h-4 mr-2" />
-                                      {video.thumbnail ? 'Change Thumbnail' : 'Upload Thumbnail'}
-                                    </ObjectUploader>
-                                    {video.isUploadingThumbnail && (
-                                      <p className="text-sm text-primary mt-1">Uploading thumbnail...</p>
-                                    )}
-                                  </div>
-                                </div>
-                                <p className="text-sm text-muted-foreground mt-1">
-                                  JPG, PNG up to 5MB. Recommended: 16:9 aspect ratio (e.g., 1280x720px)
-                                </p>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        ))}
-
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={addVideo}
-                          className="w-full"
-                          data-testid="button-add-video"
-                        >
-                          <Plus className="w-4 h-4 mr-2" />
-                          Add Video
-                        </Button>
                       </div>
                     </CardContent>
                   </Card>
-                </TabsContent>
-              </Tabs>
-
-              <div className="flex justify-between mt-8">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setLocation('/')}
-                  data-testid="button-cancel"
-                >
-                  Cancel
-                </Button>
-                
-                <div className="flex gap-2">
-                  {currentTab !== "profile" && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        const tabs = ["profile", "expertise", "tools", "content"];
-                        const currentIndex = tabs.indexOf(currentTab);
-                        if (currentIndex > 0) setCurrentTab(tabs[currentIndex - 1]);
-                      }}
-                      data-testid="button-previous"
-                    >
-                      Previous
-                    </Button>
-                  )}
-
-                  {currentTab !== "content" ? (
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        const tabs = ["profile", "expertise", "tools", "content"];
-                        const currentIndex = tabs.indexOf(currentTab);
-                        if (currentIndex < tabs.length - 1) setCurrentTab(tabs[currentIndex + 1]);
-                      }}
-                      data-testid="button-next"
-                    >
-                      Next
-                    </Button>
-                  ) : (
-<Button
-  type="button" // Not "submit"
-  onClick={form.handleSubmit((data) => {
-    console.log("Form submitted via onClick:", data);
-
-    const completeData = {
-      ...data,
-      specialties: selectedSpecialties,
-      tools: selectedTools,
-      certifications: selectedCertifications,
-      videos: videos,
-      image: profileImageUrl,
-    };
-
-    registerCoachMutation.mutate(completeData);
-  })}
->
-  Complete Registration
-</Button>
-                  )}
                 </div>
+              </TabsContent>
+
+              <TabsContent value="content" className="mt-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Star className="w-5 h-5" />
+                      Content (optional)
+                    </CardTitle>
+                    <CardDescription>
+                      Video and profile image uploads are handled in your profile editor after registration/approval.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-sm text-muted-foreground">
+                      You can add instructional videos and a profile photo from your profile page once your coach account is created and approved. This helps keep the registration lightweight and speeds up approval.
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
+
+            <div className="flex justify-between mt-8">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setLocation('/')}
+                data-testid="button-cancel"
+              >
+                Cancel
+              </Button>
+
+              <div className="flex gap-2">
+                {currentTab !== "profile" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      const tabs = ["profile", "expertise", "tools", "content"];
+                      const currentIndex = tabs.indexOf(currentTab);
+                      if (currentIndex > 0) setCurrentTab(tabs[currentIndex - 1]);
+                    }}
+                    data-testid="button-previous"
+                  >
+                    Previous
+                  </Button>
+                )}
+
+                {currentTab !== "content" ? (
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      const tabs = ["profile", "expertise", "tools", "content"];
+                      const currentIndex = tabs.indexOf(currentTab);
+                      if (currentIndex < tabs.length - 1) setCurrentTab(tabs[currentIndex + 1]);
+                    }}
+                    data-testid="button-next"
+                  >
+                    Next
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={form.handleSubmit((data) => {
+                      // Final client-side guard: require strong password and matching confirm
+                      if (pwScore < minAcceptableScore) {
+                        toast({ title: "Weak password", description: "Please choose a stronger password before submitting.", variant: "destructive" });
+                        return;
+                      }
+                      handleSubmit(data);
+                    })}
+                    data-testid="button-complete-registration"
+                  >
+                    Complete Registration
+                  </Button>
+                )}
               </div>
-            </Form>
-      
+            </div>
+          </Form>
         </div>
       </div>
     </div>
