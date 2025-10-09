@@ -1,9 +1,9 @@
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
-import { Star, MapPin, Clock, Phone, Mail, Calendar, Award } from "lucide-react";
+import { Star, MapPin, Clock, Calendar, Award } from "lucide-react";
 import { Coach } from "./CoachCard";
 
 interface CoachProfileProps {
@@ -29,37 +29,8 @@ export default function CoachProfile({ coach, isOpen, onClose, onBookLesson }: C
     ));
   };
 
-  // TODO: remove mock functionality
-  const mockReviews = [
-    {
-      id: '1',
-      name: 'Sarah M.',
-      rating: 5,
-      date: '2 weeks ago',
-      comment: 'Excellent instructor! Really helped improve my swing mechanics.'
-    },
-    {
-      id: '2',
-      name: 'John D.',
-      rating: 5,
-      date: '1 month ago',
-      comment: 'Great patience and clear explanations. Highly recommend!'
-    },
-    {
-      id: '3',
-      name: 'Lisa K.',
-      rating: 4,
-      date: '2 months ago',
-      comment: 'Very knowledgeable and professional. My putting has improved significantly.'
-    }
-  ];
-
-  const mockCertifications = [
-    'PGA Class A Professional',
-    'TPI Certified (Titleist Performance Institute)',
-    'US Kids Golf Certified',
-    'First Aid & CPR Certified'
-  ];
+  // Check if we have coordinates to show the map
+  const hasCoordinates = typeof coach.latitude === 'number' && typeof coach.longitude === 'number';
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -68,7 +39,7 @@ export default function CoachProfile({ coach, isOpen, onClose, onBookLesson }: C
         <div className="bg-primary/10 p-6">
           <div className="flex items-start gap-6">
             <Avatar className="w-24 h-24 border-4 border-white shadow-lg">
-              <AvatarImage src={coach.image} alt={coach.name} />
+              {coach.image && <img src={coach.image} alt={coach.name} className="h-full w-full object-cover" />}
               <AvatarFallback className="bg-primary text-primary-foreground text-2xl">
                 {coach.name.split(' ').map(n => n[0]).join('')}
               </AvatarFallback>
@@ -79,17 +50,20 @@ export default function CoachProfile({ coach, isOpen, onClose, onBookLesson }: C
                 {coach.name}
               </h2>
               
-              <div className="flex items-center gap-2 mb-3">
-                <div className="flex items-center">
-                  {renderStars(coach.rating)}
+              {/* Google Reviews Rating (Only if available) */}
+              {typeof coach.googleRating === "number" && typeof coach.googleReviewCount === "number" && (
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="flex items-center">
+                    {renderStars(coach.googleRating)}
+                  </div>
+                  <span className="text-lg font-semibold text-green-600" data-testid="text-profile-google-rating">
+                    {coach.googleRating}
+                  </span>
+                  <span className="text-muted-foreground">
+                    ({coach.googleReviewCount} Google reviews)
+                  </span>
                 </div>
-                <span className="text-lg font-semibold" data-testid="text-profile-rating">
-                  {coach.rating}
-                </span>
-                <span className="text-muted-foreground">
-                  ({coach.reviewCount} reviews)
-                </span>
-              </div>
+              )}
               
               <div className="flex items-center gap-4 text-muted-foreground mb-4">
                 <div className="flex items-center gap-1">
@@ -205,94 +179,92 @@ export default function CoachProfile({ coach, isOpen, onClose, onBookLesson }: C
             </div>
           </div>
 
-          {/* Quick Info */}
+          {/* Quick Info with Map */}
           <div>
             <h3 className="text-xl font-bold mb-3">Quick Info</h3>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <Clock className="w-5 h-5 text-primary" />
-                    <div>
-                      <div className="font-medium">Response Time</div>
-                      <div className="text-sm text-muted-foreground">{coach.responseTime}</div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <Calendar className="w-5 h-5 text-primary" />
-                    <div>
-                      <div className="font-medium">Availability</div>
-                      <div className="text-sm text-muted-foreground">{coach.availability}</div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <MapPin className="w-5 h-5 text-primary" />
-                    <div>
-                      <div className="font-medium">Distance</div>
-                      <div className="text-sm text-muted-foreground">{coach.distance}</div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-
-          {/* Reviews Section */}
-          <div>
-            <h3 className="text-xl font-bold mb-4">Recent Reviews</h3>
-            <div className="space-y-4">
-              {mockReviews.map((review) => (
-                <Card key={review.id}>
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <Avatar className="w-8 h-8">
-                          <AvatarFallback className="text-xs bg-muted">
-                            {review.name.split(' ').map(n => n[0]).join('')}
-                          </AvatarFallback>
-                        </Avatar>
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="col-span-3 md:col-span-1">
+                <div className="space-y-4">
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-3">
+                        <Clock className="w-5 h-5 text-primary" />
                         <div>
-                          <div className="font-medium text-sm">{review.name}</div>
-                          <div className="flex items-center gap-1">
-                            {renderStars(review.rating)}
-                          </div>
+                          <div className="font-medium">Response Time</div>
+                          <div className="text-sm text-muted-foreground">{coach.responseTime}</div>
                         </div>
                       </div>
-                      <div className="text-sm text-muted-foreground">{review.date}</div>
+                    </CardContent>
+                  </Card>
+                  
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-3">
+                        <Calendar className="w-5 h-5 text-primary" />
+                        <div>
+                          <div className="font-medium">Availability</div>
+                          <div className="text-sm text-muted-foreground">{coach.availability}</div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-3">
+                        <MapPin className="w-5 h-5 text-primary" />
+                        <div>
+                          <div className="font-medium">Distance</div>
+                          <div className="text-sm text-muted-foreground">{coach.distance}</div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+              
+              {/* Map Card - Using the same format as your working example */}
+              <Card className="col-span-3 md:col-span-2 overflow-hidden">
+                <CardContent className="p-0 h-[260px]">
+                  {hasCoordinates ? (
+                    <>
+                      <div className="text-xs text-muted-foreground p-2 bg-muted/20">
+                        Location: {coach.location}
+                      </div>
+                      <iframe
+                        title={`${coach.name}'s location`}
+                        width="100%"
+                        height="230"
+                        style={{ border: 0 }}
+                        loading="lazy"
+                        allowFullScreen
+                        referrerPolicy="no-referrer-when-downgrade"
+                        src={`https://www.google.com/maps?q=${coach.latitude},${coach.longitude}&z=15&output=embed`}
+                      />
+                    </>
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-muted/30 text-muted-foreground">
+                      <div className="text-center p-4">
+                        <MapPin className="w-8 h-8 mx-auto mb-2 text-muted-foreground/70" />
+                        <p>Location: {coach.location}</p>
+                        <p className="text-sm mt-2">No exact coordinates available</p>
+                      </div>
                     </div>
-                    <p className="text-sm text-muted-foreground">{review.comment}</p>
-                  </CardContent>
-                </Card>
-              ))}
+                  )}
+                </CardContent>
+              </Card>
             </div>
           </div>
 
-          {/* Contact Actions */}
-          <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t">
+          {/* Book Lesson Button (Bottom) */}
+          <div className="flex justify-center pt-4">
             <Button 
-              variant="outline" 
-              className="flex-1"
-              data-testid="button-profile-message"
-            >
-              <Mail className="w-4 h-4 mr-2" />
-              Send Message
-            </Button>
-            <Button 
-              className="flex-1" 
+              size="lg" 
+              className="px-8" 
               onClick={() => onBookLesson(coach)}
               data-testid="button-profile-book-now"
             >
-              <Calendar className="w-4 h-4 mr-2" />
+              <Calendar className="w-5 h-5 mr-2" />
               Book Lesson Now
             </Button>
           </div>
