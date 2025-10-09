@@ -2,17 +2,13 @@ import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Star, MapPin, Clock } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import maleCoachImage from "@assets/generated_images/Male_golf_coach_headshot_893584c9.png";
 
 /**
  * Normalize whatever is stored in coach.image into a URL the browser can fetch.
- * - If it's already a full URL (https://...) return as-is.
- * - If it's an absolute path ("/objects/..."), prefix origin.
- * - If it's a storage key like "profile-images/xxx.jpg", return server proxy /objects/<encoded>
- * This mirrors resolveImageUrl in App.tsx but kept local for robustness.
  */
 function resolveImageUrl(rawImage: any): string | null {
   if (!rawImage) return null;
@@ -29,6 +25,19 @@ function resolveImageUrl(rawImage: any): string | null {
   // Treat as storage key (encode segments to preserve slashes)
   const encodedPath = rawImage.split("/").map(encodeURIComponent).join("/");
   return typeof window !== "undefined" ? `${window.location.origin}/objects/${encodedPath}` : `/objects/${encodedPath}`;
+}
+
+// Haversine distance in miles
+function haversineMiles(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 3958.8;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
 
 export interface Coach {
@@ -59,6 +68,10 @@ export interface Coach {
   googleRating?: number;
   googleReviewCount?: number;
   lastGoogleSync?: string;
+  
+  // Explicit properties for distance calculation
+  latitude?: number;
+  longitude?: number;
 }
 
 interface CoachCardProps {
@@ -75,24 +88,89 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
   const initialResolved = resolveImageUrl(coach.image) || "";
   const [imgSrc, setImgSrc] = useState<string>(initialResolved);
 
+  // Local computed distance fallback
+  const [computedDistance, setComputedDistance] = useState<string | null>(null);
+
   // Keep imgSrc in sync if coach prop changes
   useEffect(() => {
     setImgSrc(resolveImageUrl(coach.image) || "");
   }, [coach.image]);
 
-  // Debugging help: prints the resolved image being used for this card (remove in prod)
+  // Fallback: if coach.distance is missing/unknown and we have coach lat/lng, compute from device location
   useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.debug(`CoachCard[${coach.id}] image raw:`, coach.image, "resolved:", imgSrc);
-  }, [coach.id, coach.image, imgSrc]);
+    // Only update if necessary - avoid unnecessary re-renders
+    const needsCompute =
+      (!coach.distance || coach.distance.toLowerCase() === "unknown" || coach.distance.toLowerCase() === "unknown away") &&
+      typeof coach.latitude === "number" &&
+      typeof coach.longitude === "number";
+
+    console.log(`CoachCard ${coach.name} distance check:`, {
+      distance: coach.distance,
+      latitude: coach.latitude,
+      longitude: coach.longitude,
+      needsCompute
+    });
+
+    if (!needsCompute) {
+      setComputedDistance(null);
+      return;
+    }
+
+    if (!navigator?.geolocation) {
+      console.log(`CoachCard ${coach.name}: No geolocation API`);
+      setComputedDistance(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (cancelled) return;
+        console.log(`CoachCard ${coach.name} got location:`, pos.coords.latitude, pos.coords.longitude);
+        
+        try {
+          const miles = haversineMiles(
+            pos.coords.latitude,
+            pos.coords.longitude,
+            coach.latitude as number,
+            coach.longitude as number
+          );
+          
+          if (Number.isFinite(miles)) {
+            const distanceLabel = `${miles.toFixed(1)} miles`;
+            console.log(`CoachCard ${coach.name} computed distance: ${distanceLabel}`);
+            setComputedDistance(distanceLabel);
+          } else {
+            console.log(`CoachCard ${coach.name}: Invalid distance calculation result`);
+            setComputedDistance(null);
+          }
+        } catch (e) {
+          console.error(`CoachCard ${coach.name} distance calculation error:`, e);
+          setComputedDistance(null);
+        }
+      },
+      (err) => {
+        console.warn(`CoachCard ${coach.name} geolocation error:`, err);
+        if (!cancelled) setComputedDistance(null);
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 8000,
+        maximumAge: 5 * 60 * 1000, // reuse recent location if available
+      }
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [coach.distance, coach.latitude, coach.longitude, coach.id, coach.name]);
 
   const renderStars = (rating: number) => {
     return Array.from({ length: 5 }, (_, i) => (
       <Star
         key={i}
-        className={`w-4 h-4 ${
-          i < Math.floor(rating) ? 'text-yellow-400 fill-current' : 'text-gray-300'
-        }`}
+        className={`w-4 h-4 ${i < Math.floor(rating) ? "text-yellow-400 fill-current" : "text-gray-300"}`}
       />
     ));
   };
@@ -102,15 +180,32 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
     e.stopPropagation();
 
     if (user) {
-      // Logged in -> continue booking flow
       onBookLesson(coach);
     } else {
-      // Not logged in -> open the auth modal and attach a pending action so the app can continue after login
       openAuthModal({
         initialTab: "login",
-        pendingAction: { type: "book", coachId: coach.id }
+        pendingAction: { type: "book", coachId: coach.id },
       });
     }
+  };
+
+  // Format the distance string properly
+  const getDistanceText = () => {
+    // First try computed distance if available
+    if (computedDistance) {
+      return `${computedDistance} away`;
+    }
+    
+    // Then try the passed-in distance (if not "Unknown")
+    if (coach.distance && !coach.distance.toLowerCase().includes("unknown")) {
+      // If it already says "away", don't duplicate
+      return coach.distance.toLowerCase().includes("away") 
+        ? coach.distance 
+        : `${coach.distance} away`;
+    }
+    
+    // Finally fallback to "Distance unknown" (better UX)
+    return "Distance unknown";
   };
 
   return (
@@ -124,24 +219,29 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
       <CardContent className="p-6">
         <div className="flex items-start gap-4">
           {/* Profile Image */}
-         <Avatar className="w-16 h-16 border-2 border-primary/20">
-  {imgSrc ? (
-    <img
-      src={imgSrc}
-      alt={coach.name}
-      className="w-full h-full object-cover rounded-full"
-      onError={(e) => {
-        const tgt = e.currentTarget as HTMLImageElement;
-        // Avoid infinite loop if fallback also fails
-        if (tgt.src.includes("Male_golf_coach_headshot")) return;
-        tgt.src = maleCoachImage;
-      }}
-    />
-  ) : null}
-  <AvatarFallback className="bg-primary text-primary-foreground">
-    {coach.name.split(' ').map(n => n[0]).join('')}
-  </AvatarFallback>
-</Avatar>
+          <Avatar className="w-16 h-16 border-2 border-primary/20">
+            {imgSrc ? (
+              <img
+                src={imgSrc}
+                alt={coach.name}
+                className="w-full h-full object-cover rounded-full"
+                onError={(e) => {
+                  const tgt = e.currentTarget as HTMLImageElement;
+                  // Avoid infinite loop if fallback also fails
+                  if (tgt.src.includes("Male_golf_coach_headshot")) return;
+                  tgt.src = maleCoachImage;
+                }}
+              />
+            ) : null}
+            <AvatarFallback className="bg-primary text-primary-foreground">
+              {coach.name
+                .split(" ")
+                .filter(Boolean)
+                .map((n) => n[0])
+                .join("")
+                .slice(0, 2)}
+            </AvatarFallback>
+          </Avatar>
 
           {/* Coach Info */}
           <div className="flex-1 min-w-0">
@@ -153,20 +253,16 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
                 <div className="space-y-1 mb-2">
                   {/* Platform Rating */}
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center">
-                      {renderStars(coach.rating)}
-                    </div>
+                    <div className="flex items-center">{renderStars(coach.rating)}</div>
                     <span className="text-sm text-muted-foreground" data-testid={`text-rating-${coach.id}`}>
                       {coach.rating} ({coach.reviewCount} platform reviews)
                     </span>
                   </div>
 
                   {/* Google Reviews Rating */}
-                  {coach.googleRating && coach.googleReviewCount && (
+                  {typeof coach.googleRating === "number" && typeof coach.googleReviewCount === "number" && (
                     <div className="flex items-center gap-2">
-                      <div className="flex items-center">
-                        {renderStars(coach.googleRating)}
-                      </div>
+                      <div className="flex items-center">{renderStars(coach.googleRating)}</div>
                       <span className="text-sm text-green-600 font-medium" data-testid={`text-google-rating-${coach.id}`}>
                         {coach.googleRating} Google ({coach.googleReviewCount} reviews)
                       </span>
@@ -189,15 +285,13 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
                 <MapPin className="w-4 h-4" />
                 <span>{coach.location}</span>
               </div>
-              <div className="flex items-center gap-1">
-                <span>{coach.distance} away</span>
+              <div className="flex items-center gap-1" data-testid={`distance-${coach.id}`}>
+                <span>{getDistanceText()}</span>
               </div>
             </div>
 
             {/* Bio */}
-            <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
-              {coach.bio}
-            </p>
+            <p className="text-sm text-muted-foreground mb-3 line-clamp-2">{coach.bio}</p>
 
             {/* Tools & Equipment */}
             {coach.tools && coach.tools.length > 0 && (
@@ -212,9 +306,7 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
                     </Badge>
                   ))}
                   {coach.tools.length > 3 && (
-                    <Badge variant="outline" className="text-xs">
-                      +{coach.tools.length - 3} more
-                    </Badge>
+                    <Badge variant="outline" className="text-xs">+{coach.tools.length - 3} more</Badge>
                   )}
                 </div>
               </div>
@@ -228,9 +320,7 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
                 </Badge>
               ))}
               {coach.specialties.length > 3 && (
-                <Badge variant="outline" className="text-xs">
-                  +{coach.specialties.length - 3} more
-                </Badge>
+                <Badge variant="outline" className="text-xs">+{coach.specialties.length - 3} more</Badge>
               )}
             </div>
 

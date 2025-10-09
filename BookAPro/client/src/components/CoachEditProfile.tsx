@@ -19,7 +19,7 @@ import { useLocation } from "wouter";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import LocationAutocomplete from "@/components/LocationAutocomplete";
 
-// Validation schema for coach edit profile
+// VALIDATION SCHEMA
 const coachEditSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z.string().min(4, "Password must be at least 6 characters").optional(),
@@ -59,7 +59,7 @@ type CoachEditForm = z.infer<typeof coachEditSchema>;
 
 const GOLF_SPECIALTIES = [
   "Swing Analysis", "Putting", "Short Game", "Course Strategy", "Mental Game",
-  "Beginner Instruction", "Advanced Techniques", "Junior Programs", 
+  "Beginner Instruction", "Advanced Techniques", "Junior Programs",
   "Tournament Prep", "Fitness Training", "Injury Prevention", "Golf Etiquette"
 ];
 
@@ -84,10 +84,25 @@ const RESPONSE_TIMES = [
 ];
 
 const AVAILABILITY_OPTIONS = [
-  "Available today", "Available this week", "Available next week", 
+  "Available today", "Available this week", "Available next week",
   "Available weekdays", "Available weekends", "Available evenings",
   "By appointment only"
 ];
+
+// GOOGLE GEOCODE API KEY
+const GOOGLE_GEOCODE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+
+async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
+  if (!address) return null;
+  const res = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`, { credentials: "include" });
+  const data = await res.json();
+  if (data.status === "OK" && data.results?.[0]) {
+    const { lat, lng } = data.results[0].geometry.location;
+    return { lat, lng };
+  }
+  console.warn("Geocoding failed:", data.status, data.error_message);
+  return null;
+}
 
 export default function CoachEditProfile() {
   const [, setLocation] = useLocation();
@@ -99,6 +114,10 @@ export default function CoachEditProfile() {
   const [videos, setVideos] = useState<Array<CoachEditForm["videos"][number]>>([]);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false);
+
+  // New: geocoding UI state
+  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [geocodeError, setGeocodeError] = useState<string | null>(null);
 
   const form = useForm<CoachEditForm>({
     resolver: zodResolver(coachEditSchema),
@@ -154,7 +173,7 @@ export default function CoachEditProfile() {
     }
   }, [coachProfile, form]);
 
-  // Edit mutation
+  // EDIT MUTATION
   const editCoachMutation = useMutation({
     mutationFn: async (data: any) => {
       const response = await fetch('/api/coaches/me', {
@@ -188,13 +207,13 @@ export default function CoachEditProfile() {
   });
 
   // Google Calendar Connect/Disconnect
-const handleGoogleCalendarConnect = async () => {
-  try {
-    window.location.href = "/api/google/auth";
-  } catch (error) {
-    toast({ title: "Google Calendar Error", description: "Could not connect calendar", variant: "destructive" });
-  }
-};
+  const handleGoogleCalendarConnect = async () => {
+    try {
+      window.location.href = "/api/google/auth";
+    } catch (error) {
+      toast({ title: "Google Calendar Error", description: "Could not connect calendar", variant: "destructive" });
+    }
+  };
   const handleGoogleCalendarDisconnect = async () => {
     try {
       const response = await fetch("/api/google/calendar/disconnect", { method: "POST", credentials: "include" });
@@ -210,92 +229,50 @@ const handleGoogleCalendarConnect = async () => {
   // Profile image upload
 const handleGetUploadParameters = async (uppyFile) => {
   const file = uppyFile.data;
+  // Decide the final storage key on the client (or do it on the server)
+  const objectPath = `profile-images/${Date.now()}_${file.name}`;
+
   const response = await fetch('/api/objects/upload', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      filename: `${Date.now()}_${file.name}`,
+      objectPath,                 // tell server where this will live
       contentType: file.type,
     }),
   });
   if (!response.ok) throw new Error('Failed to get upload URL');
   const { uploadURL } = await response.json();
-  return { method: 'PUT', url: uploadURL };
+
+  // Stash objectPath on the file for later
+  uppyFile.meta = { ...(uppyFile.meta || {}), objectPath };
+
+  return { method: 'PUT', url: uploadURL, headers: { 'Content-Type': file.type } };
 };
 
 const handleImageUploadComplete = async (result: any) => {
   setIsUploadingImage(true);
-
-  if (!result.successful || result.successful.length === 0) {
-    setIsUploadingImage(false);
-    return;
-  }
-
-  const uploadedFile = result.successful[0];
-  console.log("Uppy file upload result:", uploadedFile);
-
-  // For XHRUpload, the URL is here:
-  const uploadUrl = uploadedFile?.response?.body?.url;
-  console.log("Extracted uploadUrl:", uploadUrl);
-
-  if (!uploadUrl) {
-    setIsUploadingImage(false);
-    toast({
-      title: "Upload Failed",
-      description: "No upload URL found for the uploaded file.",
-      variant: "destructive",
-    });
-    return;
-  }
-
-  // Either skip normalization, or fix it!
-  // (1) If you do NOT need normalization, just use uploadUrl:
-  form.setValue('image', uploadUrl, { shouldValidate: true });
-  console.log("form image value after set (no normalization):", form.getValues('image'));
-  setIsUploadingImage(false);
-  toast({
-    title: "Profile Image Uploaded",
-    description: "Your profile image has been uploaded successfully.",
-  });
-
-  // (2) If you DO need normalization, keep this but make sure it works:
-  /*
   try {
-    const response = await fetch('/api/objects/normalize-profile-image', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ imageURL: uploadUrl }),
-    });
-    const { objectPath } = await response.json();
-    console.log("normalize-profile-image objectPath:", objectPath);
+    if (!result.successful?.length) return;
 
-    if (response.ok && objectPath) {
-      form.setValue('image', objectPath, { shouldValidate: true });
-      console.log("form image value after set:", form.getValues('image'));
-      toast({
-        title: "Profile Image Uploaded",
-        description: "Your profile image has been uploaded successfully.",
-      });
-    } else {
-      toast({
-        title: "Upload Processing Failed",
-        description: "There was an error processing your uploaded image.",
-        variant: "destructive",
-      });
-    }
-  } catch (error) {
-    toast({
-      title: "Upload Processing Failed",
-      description: "There was an error processing your uploaded image.",
-      variant: "destructive",
-    });
+    const uploadedFile = result.successful[0];
+    const objectPath = uploadedFile?.meta?.objectPath;
+    if (!objectPath) throw new Error("Missing objectPath from upload");
+
+    // Use your proxy which generates a short-lived signed URL on every request
+    const stableUrl = `/objects/${objectPath}`;
+
+    // Set a stable URL in the form (NOT a blob: URL, NOT the upload PUT URL)
+    form.setValue('image', stableUrl, { shouldValidate: true });
+    toast({ title: "Profile Image Uploaded" });
+  } catch (e: any) {
+    toast({ title: "Upload Failed", description: e.message, variant: "destructive" });
+  } finally {
+    setIsUploadingImage(false);
   }
-  setIsUploadingImage(false);
-  */
 };
-  // Video upload logic (same as registration)
+
+  // Video upload logic
   const handleVideoUpload = (videoIndex: number) => async (result: any) => {
     const updatedVideos = [...videos];
     updatedVideos[videoIndex].isUploadingVideo = false;
@@ -373,55 +350,76 @@ const handleImageUploadComplete = async (result: any) => {
     setVideos(updatedVideos);
   };
 
-  // Specialties, tools, certifications selection
-  const addSpecialty = (specialty: string) => {
-    if (!selectedSpecialties.includes(specialty)) setSelectedSpecialties([...selectedSpecialties, specialty]);
+  // Location input changes: accept string or object from LocationAutocomplete
+  const handleLocationInput = (value: any) => {
+    if (typeof value === "string") {
+      form.setValue("location", value, { shouldValidate: true, shouldDirty: true });
+    } else if (value && typeof value === "object") {
+      // If your LocationAutocomplete returns lat/lng, use them immediately
+      const locString = value.location || value.label || value.description || "";
+      form.setValue("location", locString, { shouldValidate: true, shouldDirty: true });
+      if (typeof value.latitude === "number" && typeof value.longitude === "number") {
+        form.setValue("latitude", value.latitude, { shouldValidate: true });
+        form.setValue("longitude", value.longitude, { shouldValidate: true });
+      }
+    }
   };
-  const removeSpecialty = (specialty: string) => setSelectedSpecialties(selectedSpecialties.filter(s => s !== specialty));
 
-  const addTool = (tool: string) => {
-    if (!selectedTools.includes(tool)) setSelectedTools([...selectedTools, tool]);
-  };
-  const removeTool = (tool: string) => setSelectedTools(selectedTools.filter(t => t !== tool));
+  // Debounced geocoding whenever the location string changes
+  const locationValue = form.watch("location");
+  useEffect(() => {
+    // Clear error and skip short inputs
+    if (!locationValue || locationValue.trim().length < 4) {
+      setGeocodeError(null);
+      return;
+    }
 
-  const addCertification = (certification: string) => {
-    if (!selectedCertifications.includes(certification)) setSelectedCertifications([...selectedCertifications, certification]);
-  };
-  const removeCertification = (certification: string) => setSelectedCertifications(selectedCertifications.filter(c => c !== certification));
+    let cancelled = false;
+    setIsGeocoding(true);
+    setGeocodeError(null);
 
-  // Submit handler - always use form value for image
-const handleSubmit = async (data: CoachEditForm) => {
-console.log("Submitting form data:", data);
-  // Prevent form submission until image upload (or any upload) is finished
-  if (isUploadingImage) {
-    toast({
-      title: "Please wait for the image upload to finish.",
-      description: "Your changes will be saved once your profile image is uploaded.",
-      variant: "destructive"
+    const t = setTimeout(async () => {
+      const coords = await geocodeAddress(locationValue.trim());
+      if (cancelled) return;
+      setIsGeocoding(false);
+      if (coords) {
+        form.setValue("latitude", coords.lat, { shouldValidate: true });
+        form.setValue("longitude", coords.lng, { shouldValidate: true });
+      } else {
+        // Clear if not found
+        form.setValue("latitude", undefined, { shouldValidate: true });
+        form.setValue("longitude", undefined, { shouldValidate: true });
+        setGeocodeError("Could not find that address. Please refine the address.");
+      }
+    }, 600); // debounce
+
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [locationValue]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Submit handler
+  const handleSubmit = async (data: CoachEditForm) => {
+    if (isUploadingImage) {
+      toast({
+        title: "Please wait for the image upload to finish.",
+        description: "Your changes will be saved once your profile image is uploaded.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    editCoachMutation.mutate({
+      ...data,
+      specialties: selectedSpecialties,
+      tools: selectedTools,
+      certifications: selectedCertifications,
+      videos,
+      image: data.image,
+      googleCalendarConnected
     });
-    return;
-  }
-
-  // Optional: You can warn or block if image is required and not set (if you want)
-  // if (!data.image) {
-  //   toast({
-  //     title: "Profile image required",
-  //     description: "Please upload a profile image before saving.",
-  //     variant: "destructive"
-  //   });
-  //   return;
-  // }
-
-  editCoachMutation.mutate({
-    ...data,
-    specialties: selectedSpecialties,
-    tools: selectedTools,
-    certifications: selectedCertifications,
-    videos,
-    image: data.image, // This value is set only after a successful upload
-    googleCalendarConnected
-  });
-};
+  };
 
   if (loadingProfile) {
     return (
@@ -529,23 +527,48 @@ console.log("Submitting form data:", data);
                         <FormField
                           control={form.control}
                           name="location"
-                          render={({ field }) => (
+                          render={() => (
                             <FormItem>
                               <FormLabel className="flex items-center gap-2">
                                 <MapPin className="w-4 h-4" />
                                 Location *
                               </FormLabel>
                               <FormControl>
+                                {/* If LocationAutocomplete is stuck, temporarily replace with <Input> to test */}
                                 <LocationAutocomplete
-                                  value={field.value}
-                                  onChange={(locObj) => {
-                                    field.onChange(locObj.location);
-                                    form.setValue("latitude", locObj.latitude, { shouldValidate: true });
-                                    form.setValue("longitude", locObj.longitude, { shouldValidate: true });
-                                  }}
+                                  value={locationValue}
+                                  onChange={handleLocationInput}
                                 />
+                                {/* Fallback example: */}
+                                {/* <Input
+                                  value={locationValue || ""}
+                                  onChange={(e) => handleLocationInput(e.target.value)}
+                                  placeholder="123 Main St, City, State"
+                                /> */}
                               </FormControl>
+                              <div className="text-xs mt-1">
+                                {isGeocoding && <span className="text-muted-foreground">Geocoding address…</span>}
+                                {!isGeocoding && geocodeError && <span className="text-red-600">{geocodeError}</span>}
+                              </div>
                               <FormMessage />
+                              {/* Show coordinates & map preview if available */}
+                              {form.watch("latitude") && form.watch("longitude") && (
+                                <div className="mt-2">
+                                  <div className="text-xs text-muted-foreground">
+                                    Lat: {form.watch("latitude")}, Lng: {form.watch("longitude")}
+                                  </div>
+                                  <iframe
+                                    title="Location Map"
+                                    width="100%"
+                                    height="200"
+                                    style={{ border: 0, marginTop: 8 }}
+                                    loading="lazy"
+                                    allowFullScreen
+                                    referrerPolicy="no-referrer-when-downgrade"
+                                    src={`https://www.google.com/maps?q=${form.watch("latitude")},${form.watch("longitude")}&z=15&output=embed`}
+                                  />
+                                </div>
+                              )}
                             </FormItem>
                           )}
                         />
@@ -573,10 +596,10 @@ console.log("Submitting form data:", data);
                               PGA Certification/ID *
                             </FormLabel>
                             <FormControl>
-                              <Input 
-                                placeholder="Enter your PGA certification number or ID" 
-                                {...field} 
-                                data-testid="input-pga-certification" 
+                              <Input
+                                placeholder="Enter your PGA certification number or ID"
+                                {...field}
+                                data-testid="input-pga-certification"
                               />
                             </FormControl>
                             <FormMessage />
@@ -655,9 +678,9 @@ console.log("Submitting form data:", data);
                               Google Reviews URL (Optional)
                             </FormLabel>
                             <FormControl>
-                              <Input 
-                                placeholder="https://g.page/r/your-business-name/review" 
-                                {...field} 
+                              <Input
+                                placeholder="https://g.page/r/your-business-name/review"
+                                {...field}
                                 data-testid="input-google-reviews-url"
                               />
                             </FormControl>
@@ -674,9 +697,9 @@ console.log("Submitting form data:", data);
                         <div className="flex items-center space-x-4">
                           <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center overflow-hidden">
                             {form.watch("image") ? (
-                              <img 
-                                src={form.watch("image")} 
-                                alt="Profile preview" 
+                              <img
+                                src={form.watch("image")}
+                                alt="Profile preview"
                                 className="w-full h-full object-cover"
                               />
                             ) : (
@@ -684,17 +707,17 @@ console.log("Submitting form data:", data);
                             )}
                           </div>
                           <div className="flex-1">
-<ObjectUploader
-  maxNumberOfFiles={1}
-  maxFileSize={5242880}
-  onGetUploadParameters={handleGetUploadParameters}
-  onComplete={handleImageUploadComplete}
->
-  <button type="button" className="w-full sm:w-auto">
-    <Upload className="w-4 h-4 mr-2" />
-    {form.watch("image") ? 'Change Photo' : 'Upload Photo'}
-  </button>
-</ObjectUploader>
+                            <ObjectUploader
+                              maxNumberOfFiles={1}
+                              maxFileSize={5242880}
+                              onGetUploadParameters={handleGetUploadParameters}
+                              onComplete={handleImageUploadComplete}
+                            >
+                              <button type="button" className="w-full sm:w-auto">
+                                <Upload className="w-4 h-4 mr-2" />
+                                {form.watch("image") ? 'Change Photo' : 'Upload Photo'}
+                              </button>
+                            </ObjectUploader>
                             <p className="text-sm text-muted-foreground mt-1">
                               JPG, PNG, GIF up to 5MB. Recommended: 400x400px
                             </p>
@@ -752,8 +775,8 @@ console.log("Submitting form data:", data);
                             {selectedSpecialties.map((specialty) => (
                               <Badge key={specialty} variant="default" className="flex items-center gap-1">
                                 {specialty}
-                                <X 
-                                  className="w-3 h-3 cursor-pointer" 
+                                <X
+                                  className="w-3 h-3 cursor-pointer"
                                   onClick={() => removeSpecialty(specialty)}
                                 />
                               </Badge>
@@ -782,7 +805,7 @@ console.log("Submitting form data:", data);
                                   <Plus className="w-3 h-3 mr-1" />
                                   {specialty}
                                 </Button>
-                            ))}
+                              ))}
                           </div>
                         </div>
                       </div>
@@ -808,8 +831,8 @@ console.log("Submitting form data:", data);
                               {selectedTools.map((tool) => (
                                 <Badge key={tool} variant="secondary" className="flex items-center gap-1">
                                   {tool}
-                                  <X 
-                                    className="w-3 h-3 cursor-pointer" 
+                                  <X
+                                    className="w-3 h-3 cursor-pointer"
                                     onClick={() => removeTool(tool)}
                                   />
                                 </Badge>
@@ -838,7 +861,7 @@ console.log("Submitting form data:", data);
                                     <Plus className="w-3 h-3 mr-1" />
                                     {tool}
                                   </Button>
-                              ))}
+                                ))}
                             </div>
                           </div>
                         </div>
@@ -860,8 +883,8 @@ console.log("Submitting form data:", data);
                               {selectedCertifications.map((certification) => (
                                 <Badge key={certification} variant="default" className="flex items-center gap-1">
                                   {certification}
-                                  <X 
-                                    className="w-3 h-3 cursor-pointer" 
+                                  <X
+                                    className="w-3 h-3 cursor-pointer"
                                     onClick={() => removeCertification(certification)}
                                   />
                                 </Badge>
@@ -890,7 +913,7 @@ console.log("Submitting form data:", data);
                                     <Plus className="w-3 h-3 mr-1" />
                                     {certification}
                                   </Button>
-                              ))}
+                                ))}
                             </div>
                           </div>
                         </div>
@@ -992,9 +1015,9 @@ console.log("Submitting form data:", data);
                                 <div className="flex items-center space-x-4 mt-2">
                                   <div className="w-16 h-12 bg-muted flex items-center justify-center overflow-hidden rounded">
                                     {video.thumbnail ? (
-                                      <img 
-                                        src={video.thumbnail} 
-                                        alt="Video thumbnail" 
+                                      <img
+                                        src={video.thumbnail}
+                                        alt="Video thumbnail"
                                         className="w-full h-full object-cover"
                                       />
                                     ) : (
@@ -1048,14 +1071,14 @@ console.log("Submitting form data:", data);
                 >
                   Cancel
                 </Button>
-<Button
-  type="submit"
-  variant="default"
-  data-testid="button-save-edit"
-  disabled={isUploadingImage || editCoachMutation.isLoading}
->
-  {isUploadingImage ? "Uploading..." : "Save Changes"}
-</Button>
+                <Button
+                  type="submit"
+                  variant="default"
+                  data-testid="button-save-edit"
+                  disabled={isUploadingImage || editCoachMutation.isLoading}
+                >
+                  {isUploadingImage ? "Uploading..." : "Save Changes"}
+                </Button>
               </div>
             </form>
           </Form>

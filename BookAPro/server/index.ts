@@ -3,10 +3,10 @@ import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import session from "express-session";
 import ConnectPgSimple from "connect-pg-simple";
-import { pool } from "./db"; // Make sure pool is the shared PG pool!
+import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { supabase } from "./supabaseClient"; // ensure this matches your client filename
+import { supabase } from "./supabaseClient";
 import passport from "passport";
 import helmet from "helmet";
 
@@ -15,14 +15,48 @@ const app = express();
 
 // --- Essential Middleware ---
 app.use(express.json());
-app.use(helmet());
+
+// Configure Helmet CSP to keep default-src 'self', allow same-origin XHR/fetch,
+// and allow Google iframe for embedded map.
+const dev = app.get("env") === "development";
+const connectSrc: string[] = ["'self'"];
+if (dev) {
+  // If you use Vite HMR websockets, allow ws/wss during dev
+  connectSrc.push("ws:", "wss:");
+}
+
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "default-src": ["'self'"],
+        // Allow API/XHR to our origin and Supabase storage endpoints (PUT/GET signed URLs)
+        "connect-src": connectSrc,
+        // Allow images from our origin, base64 data URLs, local blob previews, and Supabase storage CDN
+        "img-src": ["'self'", "data:", "blob:", "https://*.supabase.co"],
+        // If you render uploaded videos (Uppy previews or Supabase files)
+        "media-src": ["'self'", "data:", "blob:", "https://*.supabase.co"],
+        // Allow Google maps iframe
+        "frame-src": ["'self'", "https://www.google.com"],
+        // Optional (if you use inline styles or CSS-in-JS): "style-src": ["'self'", "'unsafe-inline'"],
+        // Optional (if you load fonts from CDNs): "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
+        // Optional (if using web workers created from blobs): "worker-src": ["'self'", "blob:"],
+      },
+    },
+    // Optional: disable CORP if you embed assets cross-origin and see CORP-related issues
+    // crossOriginResourcePolicy: false,
+  })
+);
 app.use(express.urlencoded({ extended: false }));
 
 // --- CORS: Allow frontend to send cookies for session auth ---
-app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:3000",
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    credentials: true,
+  })
+);
 
 // --- Session: Store sessions in Postgres ---
 app.use(
@@ -32,10 +66,10 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      maxAge: 24 * 60 * 60 * 1000,
       httpOnly: true,
-      secure: false, // ⚠️ must be false for localhost over HTTP
-      sameSite: "lax", // ✅ allows cookies between 3000 <-> 5000 in dev
+      secure: false, // dev over HTTP
+      sameSite: "lax",
     },
   })
 );
@@ -43,7 +77,7 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-// registerRoutes mounts all application routes (auth, admin, coaches, messaging, etc.)
+// Mount all application routes
 await registerRoutes(app);
 
 // --- Health Check Route ---
@@ -74,10 +108,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// --- Supabase JWT Middleware (optional, for API key auth) ---
-// If you only use session-based auth, you can remove this.
-// If you support both session and token auth, keep it!
-
+// Optional: Supabase JWT middleware if you support token auth
 app.use((req, _res, next) => {
   console.log("Session check:", req.session ? "exists" : "undefined");
   next();
@@ -88,14 +119,16 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
   if (!authHeader) return next();
 
   const token = authHeader.replace("Bearer ", "");
-  const { data: { user }, error } = await supabase.auth.getUser(token);
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser(token);
 
   if (error) {
     console.warn("Supabase auth error:", error.message);
     return next();
   }
 
-  // Attach the user to the request
   (req as any).user = user;
   next();
 });
