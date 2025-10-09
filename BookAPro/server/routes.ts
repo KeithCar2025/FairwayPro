@@ -709,53 +709,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // -----------------------------
   // OBJECT STORAGE ROUTES
   // -----------------------------
-  app.get("/objects/:objectPath(*)", async (req, res) => {
-    const userId = (req.session as any).userId;
-    const service = new ObjectStorageService();
-    try {
-      const objectFile = await service.getObjectEntityFile(req.path);
-      const canAccess = await service.canAccessObjectEntity({ objectFile, userId, requestedPermission: ObjectPermission.READ });
-      if (!canAccess) return res.sendStatus(404);
-      service.downloadObject(objectFile, res);
-    } catch (error) {
-      console.error("Object access error:", error);
-      if (error instanceof ObjectNotFoundError) return res.sendStatus(404);
-      res.sendStatus(500);
-    }
-  });
-
+  // server/routes.ts — replace /objects handler with this version
 app.get("/objects/:objectPath(*)", async (req, res) => {
   try {
-    // NOTE: use req.params.objectPath (wildcard) — not req.path — so the object key doesn't include the "/objects/" prefix
     const objectPath = req.params.objectPath;
-    if (!objectPath) {
-      return res.status(400).send("Missing object path");
-    }
+    if (!objectPath) return res.status(400).send("Missing object path");
 
-    // Log for debugging — remove in production
-    console.log("GET /objects requested for objectPath:", objectPath);
-
-    // Use the same bucket name you upload into (your upload used "profile-images")
+    // Bucket you use for profile photos
     const bucket = process.env.SUPABASE_BUCKET || "profile-images";
 
-    // Create a short-lived signed URL so the browser can fetch directly from Supabase storage.
-    // Keep this short (e.g. 60s) because we redirect immediately and the browser will request it.
-    const expiresInSeconds = 60;
+    // Create a short-lived signed URL and redirect (browser will request the signed URL)
+    const expiresInSeconds = 60; // 1 minute
     const { data, error } = await supabase.storage.from(bucket).createSignedUrl(objectPath, expiresInSeconds);
 
-    if (error) {
-      console.error("Failed to create signed URL for", objectPath, error);
-      // If the object isn't present, return 404 so frontend can show fallback image
+    if (error || !data?.signedURL) {
+      console.error("createSignedUrl failed for", objectPath, error);
       return res.status(404).send("Object not found");
     }
 
-    if (!data?.signedURL) {
-      console.error("createSignedUrl returned no signedURL for", objectPath, data);
-      return res.status(500).send("Failed to create signed URL");
-    }
+    // Optional: set a short cache-control for the redirect response so proxies don't cache the redirect long-term.
+    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
 
-    // Redirect the browser to the signed URL so it can fetch the file directly from Supabase
-    return res.redirect(data.signedURL);
+    // Redirect browser to the signed URL (it will fetch actual asset)
+    return res.redirect(302, data.signedURL);
   } catch (err) {
     console.error("Error serving object:", err);
     return res.status(500).send("Server error");

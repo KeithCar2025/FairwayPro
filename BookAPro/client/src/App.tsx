@@ -58,6 +58,43 @@ const mockCoaches: Coach[] = [
 // ------------------ React Query Client ------------------
 const queryClient = new QueryClient();
 
+/**
+ * Helper: resolveImageUrl
+ * - Accepts the raw image value returned from the API (could be a full URL,
+ *   an absolute path like "/objects/...", or a storage/object key like "profile-images/abc.jpg").
+ * - Returns a browser-fetchable absolute URL string, or null if none.
+ *
+ * NOTE: This variant will use Supabase public URLs directly when the DB already
+ * contains them (suitable if you made your bucket public). If your bucket is private,
+ * you should instead route these requests through your /objects proxy which will
+ * generate a signed URL server-side.
+ */
+function resolveImageUrl(rawImage: any): string | null {
+  if (!rawImage) return null;
+  if (typeof rawImage !== "string") return null;
+
+  // Already a full external URL (use as-is)
+  if (/^https?:\/\//i.test(rawImage)) {
+    // If it's a Supabase public URL (storage public), it's already a usable public URL when bucket is public.
+    // Return it unchanged so the browser requests it directly.
+    return rawImage;
+  }
+
+  // Already absolute path on same origin (/objects/...) -> prefix origin
+  if (rawImage.startsWith("/")) {
+    if (typeof window !== "undefined") return `${window.location.origin}${rawImage}`;
+    return rawImage;
+  }
+
+  // For relative storage keys like "profile-images/abc.jpg" or "profile-images/2025/abc.jpg",
+  // assume your server exposes them via /objects/:objectPath (if you want server proxy), but if
+  // you prefer to let frontend request the Supabase public URL directly you can build that instead.
+  // Here we prefer the server proxy for relative keys (preserves private bucket behavior),
+  // but since your DB currently stores full Supabase public URLs for many rows we handle those above.
+  const encodedPath = rawImage.split("/").map(encodeURIComponent).join("/");
+  return typeof window !== "undefined" ? `${window.location.origin}/objects/${encodedPath}` : `/objects/${encodedPath}`;
+}
+
 function AuthModalMount() {
   // Mounted inside AuthProvider so useAuth is available
   const { isAuthModalOpen, closeAuthModal } = useAuth();
@@ -94,29 +131,6 @@ function App() {
 
 export default App;
 
-/**
- * Helper: resolveImageUrl
- * - Accepts the raw image value returned from the API (could be a full URL,
- *   an absolute path like "/objects/...", or a storage/object key like "profile-images/abc.jpg").
- * - Returns a browser-fetchable absolute URL string, or null if none.
- */
-function resolveImageUrl(rawImage: any): string | null {
-  if (!rawImage) return null;
-  if (typeof rawImage !== "string") return null;
-
-  // Already a full URL -> use as-is
-  if (/^https?:\/\//i.test(rawImage)) return rawImage;
-
-  // Absolute path from backend (starts with "/objects/...")
-  if (rawImage.startsWith("/")) {
-    return typeof window !== "undefined" ? `${window.location.origin}${rawImage}` : rawImage;
-  }
-
-  // Relative storage key like "profile-images/2025/87e...jpg"
-  // Encode each segment but preserve the slashes so server routing still works
-  const encodedPath = rawImage.split("/").map(encodeURIComponent).join("/");
-  return typeof window !== "undefined" ? `${window.location.origin}/objects/${encodedPath}` : `/objects/${encodedPath}`;
-}
 function HomePage() {
   const [searchLocation, setSearchLocation] = useState("");
   const [showBookingModal, setShowBookingModal] = useState(false);
@@ -146,6 +160,8 @@ function HomePage() {
       // Map DB fields to frontend Coach type using correct column names
       return data.map((c: any) => {
         // Normalize image: prefer full URL, else resolve via /objects/..., else fall back to default asset
+        // If DB stored a full Supabase public URL (which yours currently does for some rows),
+        // resolveImageUrl will return that public URL unchanged and the browser will fetch it directly.
         const resolved = resolveImageUrl(c.image ?? c.image_path ?? c.profile_image ?? "");
         // If resolved is null, pick a sensible fallback - you could pick by gender if available.
         const fallback = maleCoachImage;

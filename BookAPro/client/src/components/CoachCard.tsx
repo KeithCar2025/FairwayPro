@@ -1,10 +1,35 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Star, MapPin, Clock } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import maleCoachImage from "@assets/generated_images/Male_golf_coach_headshot_893584c9.png";
+
+/**
+ * Normalize whatever is stored in coach.image into a URL the browser can fetch.
+ * - If it's already a full URL (https://...) return as-is.
+ * - If it's an absolute path ("/objects/..."), prefix origin.
+ * - If it's a storage key like "profile-images/xxx.jpg", return server proxy /objects/<encoded>
+ * This mirrors resolveImageUrl in App.tsx but kept local for robustness.
+ */
+function resolveImageUrl(rawImage: any): string | null {
+  if (!rawImage) return null;
+  if (typeof rawImage !== "string") return null;
+
+  // Full URL -> use directly (works for public Supabase URLs)
+  if (/^https?:\/\//i.test(rawImage)) return rawImage;
+
+  // Absolute path on same origin -> prefix origin
+  if (rawImage.startsWith("/")) {
+    return typeof window !== "undefined" ? `${window.location.origin}${rawImage}` : rawImage;
+  }
+
+  // Treat as storage key (encode segments to preserve slashes)
+  const encodedPath = rawImage.split("/").map(encodeURIComponent).join("/");
+  return typeof window !== "undefined" ? `${window.location.origin}/objects/${encodedPath}` : `/objects/${encodedPath}`;
+}
 
 export interface Coach {
   id: string;       // coaches.id
@@ -46,6 +71,21 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
   const [isHovered, setIsHovered] = useState(false);
   const { user, openAuthModal } = useAuth();
 
+  // Track the image src locally so we can gracefully fallback on error
+  const initialResolved = resolveImageUrl(coach.image) || "";
+  const [imgSrc, setImgSrc] = useState<string>(initialResolved);
+
+  // Keep imgSrc in sync if coach prop changes
+  useEffect(() => {
+    setImgSrc(resolveImageUrl(coach.image) || "");
+  }, [coach.image]);
+
+  // Debugging help: prints the resolved image being used for this card (remove in prod)
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.debug(`CoachCard[${coach.id}] image raw:`, coach.image, "resolved:", imgSrc);
+  }, [coach.id, coach.image, imgSrc]);
+
   const renderStars = (rating: number) => {
     return Array.from({ length: 5 }, (_, i) => (
       <Star
@@ -84,12 +124,24 @@ export default function CoachCard({ coach, onViewProfile, onBookLesson }: CoachC
       <CardContent className="p-6">
         <div className="flex items-start gap-4">
           {/* Profile Image */}
-          <Avatar className="w-16 h-16 border-2 border-primary/20">
-            <AvatarImage src={coach.image} alt={coach.name} />
-            <AvatarFallback className="bg-primary text-primary-foreground">
-              {coach.name.split(' ').map(n => n[0]).join('')}
-            </AvatarFallback>
-          </Avatar>
+         <Avatar className="w-16 h-16 border-2 border-primary/20">
+  {imgSrc ? (
+    <img
+      src={imgSrc}
+      alt={coach.name}
+      className="w-full h-full object-cover rounded-full"
+      onError={(e) => {
+        const tgt = e.currentTarget as HTMLImageElement;
+        // Avoid infinite loop if fallback also fails
+        if (tgt.src.includes("Male_golf_coach_headshot")) return;
+        tgt.src = maleCoachImage;
+      }}
+    />
+  ) : null}
+  <AvatarFallback className="bg-primary text-primary-foreground">
+    {coach.name.split(' ').map(n => n[0]).join('')}
+  </AvatarFallback>
+</Avatar>
 
           {/* Coach Info */}
           <div className="flex-1 min-w-0">
