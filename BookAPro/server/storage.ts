@@ -79,7 +79,53 @@ function mapCoachUpdatesToDb(updates: any) {
   return dbUpdates;
 }
 export class DatabaseStorage implements IStorage {
+// In the DatabaseStorage class
 
+async savePasswordResetToken(userId: string, token: string, expires: Date) {
+  const { data, error } = await supabase
+    .from('password_reset_tokens')
+    .insert({
+      user_id: userId,
+      token: token,
+      expires: expires.toISOString()
+    })
+    .select('id')
+    .single();
+    
+  if (error) throw error;
+  return data;
+}
+
+async getValidPasswordResetToken(token: string) {
+  const { data, error } = await supabase
+    .from('password_reset_tokens')
+    .select('*')
+    .eq('token', token)
+    .gt('expires', new Date().toISOString())
+    .eq('used', false)
+    .single();
+    
+  if (error) return null;
+  return data;
+}
+
+async invalidatePasswordResetToken(token: string) {
+  const { error } = await supabase
+    .from('password_reset_tokens')
+    .update({ used: true })
+    .eq('token', token);
+    
+  if (error) throw error;
+}
+
+async updateUserPassword(userId: string, passwordHash: string) {
+  const { error } = await supabase
+    .from('users')
+    .update({ password_hash: passwordHash })
+    .eq('id', userId);
+    
+  if (error) throw error;
+}
   // --------- PROFILE UPDATE: FULL ---------
   async updateCoachProfileFull(userId: string, updates: any) {
     // 1. Get coachId

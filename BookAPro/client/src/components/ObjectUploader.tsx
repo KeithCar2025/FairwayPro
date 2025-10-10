@@ -1,81 +1,110 @@
-import { useState, useEffect, useRef } from "react";
-import Uppy from "@uppy/core";
-import XHRUpload from "@uppy/xhr-upload";
-import { DashboardModal } from "@uppy/react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import "@uppy/core/dist/style.min.css";
-import "@uppy/dashboard/dist/style.min.css";
+import { Upload } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export function ObjectUploader({
-  maxNumberOfFiles = 1,
-  maxFileSize = 10485760, // 10MB
+  maxFileSize = 5242880, // 5MB default
   onComplete,
   buttonClassName,
   children,
 }) {
-  const [showModal, setShowModal] = useState(false);
-  const uppyRef = useRef(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const { toast } = useToast();
+  const fileInputRef = useState(null);
 
-  if (!uppyRef.current) {
-    uppyRef.current = new Uppy({
-      restrictions: { maxNumberOfFiles, maxFileSize },
-      autoProceed: true,
-    }).use(XHRUpload, {
-      endpoint: "/api/objects/upload", // <-- your Express upload route
-      fieldName: "file",
-      method: "POST",
-      responseType: "json",
-    });
-  }
-
-useEffect(() => {
-  const uppy = uppyRef.current;
-  if (!uppy) return;
-
-  uppy.off("complete");
-
-  const handleComplete = (result) => {
-    setShowModal(false);
-    setTimeout(() => {
-      if (uppy && typeof uppy.reset === "function") {
-        uppy.reset();
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    // Validate file size
+    if (file.size > maxFileSize) {
+      toast({
+        title: "File too large",
+        description: `Maximum file size is ${maxFileSize / 1024 / 1024}MB`,
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setIsUploading(true);
+    
+    try {
+      // Create FormData
+      const formData = new FormData();
+      formData.append("file", file);
+      
+      // Upload the file
+      const response = await fetch("/api/direct-upload", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
       }
-    }, 250);
-
-    if (onComplete) {
-      Promise.resolve(onComplete(result)).catch((e) =>
-        console.error("onComplete error", e)
-      );
+      
+      const result = await response.json();
+      console.log("Upload result:", result);
+      
+      if (!result.success || !result.path) {
+        throw new Error("Upload failed: Invalid server response");
+      }
+      
+      // Call onComplete with the path
+      if (onComplete) {
+        onComplete({
+          successful: [{ meta: { objectPath: result.path } }]
+        });
+      }
+      
+      toast({
+        title: "Upload successful",
+        description: "Your file has been uploaded."
+      });
+      
+    } catch (err) {
+      console.error("Upload error:", err);
+      toast({
+        title: "Upload failed",
+        description: err.message || "Failed to upload file",
+        variant: "destructive"
+      });
+    } finally {
+      setIsUploading(false);
+      // Reset the file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   };
-
-  uppy.on("complete", handleComplete);
-
-  return () => {
-    uppy.off("complete", handleComplete);
-  };
-}, [onComplete]);
-
+  
   return (
     <div>
+      <input
+        type="file"
+        id="file-upload"
+        onChange={handleFileChange}
+        style={{ display: 'none' }}
+        ref={fileInputRef}
+        accept="image/*"
+      />
       <Button
         type="button"
-        onClick={(e) => {
-          e.preventDefault();
-          setShowModal(true);
-        }}
+        disabled={isUploading}
+        onClick={() => document.getElementById('file-upload').click()}
         className={buttonClassName}
       >
-        {children}
+        {isUploading ? (
+          <span>Uploading...</span>
+        ) : (
+          <span>
+            <Upload className="w-4 h-4 mr-2" />
+            {children}
+          </span>
+        )}
       </Button>
-      {uppyRef.current && (
-        <DashboardModal
-          uppy={uppyRef.current}
-          open={showModal}
-          onRequestClose={() => setShowModal(false)}
-          proudlyDisplayPoweredByUppy={false}
-        />
-      )}
     </div>
   );
 }

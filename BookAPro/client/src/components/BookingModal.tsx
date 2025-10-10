@@ -38,10 +38,9 @@ export default function BookingModal({ coach, isOpen, onClose }: BookingModalPro
   const [selectedDate, setSelectedDate] = useState<Date>();
   const [selectedTime, setSelectedTime] = useState("");
   const auth = useAuth();
-const currentUser = auth?.user; 
+  const currentUser = auth?.user; 
   const [duration, setDuration] = useState("60");
-  const [lessonType, setLessonType] = useState("");
-  const [location, setLocation] = useState("");
+  const [lessonType, setLessonType] = useState("individual"); // Pre-selected the only lesson type
   const [notes, setNotes] = useState("");
   const [studentInfo, setStudentInfo] = useState({
     name: "",
@@ -56,28 +55,29 @@ const currentUser = auth?.user;
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isBooking, setIsBooking] = useState(false);
   
-useEffect(() => {
-  if (!isOpen || !currentUser) return; // only run when modal opens and user exists
+  useEffect(() => {
+    if (!isOpen || !currentUser) return; // only run when modal opens and user exists
 
-  fetch("/api/students/me", { credentials: "include" })
-    .then(res => (res.ok ? res.json() : null))
-    .then(data => {
-      setStudentInfo(prev => ({
-        ...prev,
-        name: data?.name || prev.name || "",
-        email: currentUser?.email || prev.email || "",
-        phone: data?.phone || prev.phone || "",
-        skillLevel: data?.skillLevel || prev.skillLevel || "",
-      }));
-    })
-    .catch(() => {
-      // fallback in case fetch fails
-      setStudentInfo(prev => ({
-        ...prev,
-        email: currentUser?.email || prev.email || "",
-      }));
-    });
-}, [isOpen, currentUser]);
+    fetch("/api/students/me", { credentials: "include" })
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        setStudentInfo(prev => ({
+          ...prev,
+          name: data?.name || prev.name || "",
+          email: currentUser?.email || prev.email || "",
+          phone: data?.phone || prev.phone || "",
+          skillLevel: data?.skillLevel || prev.skillLevel || "",
+        }));
+      })
+      .catch(() => {
+        // fallback in case fetch fails
+        setStudentInfo(prev => ({
+          ...prev,
+          email: currentUser?.email || prev.email || "",
+        }));
+      });
+  }, [isOpen, currentUser]);
+  
   useEffect(() => {
     if (!coach || !selectedDate) {
       setAvailableTimes([]);
@@ -113,9 +113,7 @@ useEffect(() => {
   if (!coach) return null;
 
   const lessonTypes = [
-    { value: "individual", label: "Individual Lesson", price: coach.pricePerHour },
-    { value: "group", label: "Small Group (2-3)", price: Math.round(coach.pricePerHour * 0.7) },
-    { value: "playing", label: "Playing Lesson", price: coach.pricePerHour + 30 }
+    { value: "individual", label: "60 minute lesson", price: coach.pricePerHour },
   ];
 
   const calculateTotal = () => {
@@ -154,11 +152,12 @@ useEffect(() => {
         time: selectedTime,
         duration: Number(duration),
         lesson_type: lessonType,
-        location: location || coach.location,
+        location: coach.location, // Always use coach's location
         notes,
         totalAmount: String(calculateTotal()),
         studentInfo
       };
+      
       await fetch('/api/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -175,7 +174,7 @@ useEffect(() => {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-		coachUserId: coach.userId,
+          coachUserId: coach.userId,
           summary: `Lesson with ${studentInfo.name}`,
           description: `Lesson type: ${lessonType}\nStudent: ${studentInfo.name}\nEmail: ${studentInfo.email}\nPhone: ${studentInfo.phone}\nSkill Level: ${studentInfo.skillLevel}\nNotes: ${notes}`,
           start: startDateTime.toISOString(),
@@ -244,12 +243,7 @@ useEffect(() => {
               {lessonTypes.map((type) => (
                 <div 
                   key={type.value}
-                  className={`border rounded-lg p-4 cursor-pointer transition-colors ${
-                    lessonType === type.value 
-                      ? 'border-primary bg-primary/5' 
-                      : 'border-border hover:border-primary/50'
-                  }`}
-                  onClick={() => setLessonType(type.value)}
+                  className={`border rounded-lg p-4 cursor-pointer transition-colors border-primary bg-primary/5`}
                   data-testid={`select-lesson-type-${type.value}`}
                 >
                   <div className="flex justify-between items-center">
@@ -384,13 +378,12 @@ useEffect(() => {
           {/* Location & Notes */}
           <div className="space-y-4">
             <div>
-              <Label htmlFor="location">Preferred Location</Label>
+              <Label htmlFor="location">Coach's Location</Label>
               <Input
                 id="location"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder={`Default: ${coach.location}`}
-                className="mt-1"
+                value={coach.location}
+                readOnly
+                className="mt-1 bg-muted/50 cursor-not-allowed"
                 data-testid="input-lesson-location"
               />
             </div>
@@ -408,7 +401,7 @@ useEffect(() => {
           </div>
 
           {/* Booking Summary */}
-          {lessonType && selectedDate && selectedTime && (
+          {selectedDate && selectedTime && (
             <div className="bg-muted/50 rounded-lg p-4">
               <h4 className="font-medium mb-2">Booking Summary</h4>
               <div className="space-y-1 text-sm">

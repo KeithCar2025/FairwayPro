@@ -14,6 +14,7 @@ import { isAuthenticated } from "./middleware/auth";
 import { pool } from "./db";
 import zxcvbn from "zxcvbn";
 import argon2 from "argon2";
+import crypto from 'crypto';
 import rateLimit from "express-rate-limit";
 import { checkPwnedCount } from "./utils/pwned.js";
 
@@ -733,34 +734,220 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // -----------------------------
   // OBJECT STORAGE ROUTES
   // -----------------------------
-  // server/routes.ts — replace /objects handler with this version
+  
+  // NEW: Objects upload endpoint - handles creating a pre-signed URL for Supabase storage
+  app.post("/api/objects/upload", async (req, res) => {
+    try {
+      const { objectPath, contentType } = req.body;
+      
+      if (!objectPath || !contentType) {
+        return res.status(400).json({ error: "Missing required parameters" });
+      }
+
+      // Check if user is authenticated
+      const userId = (req.session as any)?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      
+      console.log("Session check:", userId ? "exists" : "missing");
+
+      // Ensure bucket is configured
+      const bucket = process.env.SUPABASE_BUCKET || "profile-images";
+      
+      // Create sanitized path without bucket prefix
+      let filename = objectPath;
+      if (filename.startsWith(`${bucket}/`)) {
+        filename = filename.substring(bucket.length + 1);
+      }
+      
+      // For stability, prefix all uploads with user ID
+      // This prevents path conflicts between users
+      const userPrefix = userId.substring(0, 8); // First 8 chars of UUID
+      const finalPath = `${userPrefix}/${Date.now()}_${filename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+      
+      console.log(`Creating upload URL: bucket=${bucket}, path=${finalPath}`);
+      
+      // Get signed upload URL from Supabase
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .createSignedUploadUrl(finalPath);
+
+      if (error) {
+        console.error("createSignedUploadUrl failed:", error);
+        return res.status(400).json({ error: error.message });
+      }
+
+      if (!data?.signedUrl) {
+        return res.status(500).json({ error: "No signed URL returned" });
+      }
+
+      // Return both the signed URL and the path to use for retrieving the file later
+      return res.json({ 
+        uploadURL: data.signedUrl, 
+        objectPath: finalPath  // This is the path clients should save to reference the file
+      });
+    } catch (err) {
+      console.error("Error in /api/objects/upload:", err);
+      return res.status(500).json({ error: "Failed to generate upload URL" });
+    }
+  });
+
+  // Debug endpoint for storage troubleshooting
+  app.get("/api/debug/storage-check/:filename", async (req, res) => {
+    try {
+      const filename = req.params.filename;
+      const bucket = process.env.SUPABASE_BUCKET || "profile-images";
+      
+      // List files with the given name prefix to check existence
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .list('', {
+          limit: 100,
+          search: filename
+        });
+      
+      if (error) {
+        return res.status(400).json({ 
+          error: error.message, 
+          supabaseBucket: bucket,
+          searchedFor: filename 
+        });
+      }
+      
+      // Check bucket policy
+      const { data: bucketData, error: bucketError } = await supabase.storage
+        .getBucket(bucket);
+        
+      return res.json({ 
+        files: data, 
+        bucket: bucketData || {},
+        bucketError: bucketError?.message,
+        supabaseConfig: {
+          url: process.env.SUPABASE_URL ? "Set" : "Missing",
+          anonKey: process.env.SUPABASE_ANON_KEY ? "Set" : "Missing",
+          bucket: bucket
+        }
+      });
+    } catch (err) {
+      console.error("Debug storage check error:", err);
+      return res.status(500).json({ error: "Failed to check storage" });
+    }
+  });
+
+  // UPDATED: Objects retrieval endpoint - improved error handling and debugging
 app.get("/objects/:objectPath(*)", async (req, res) => {
   try {
     const objectPath = req.params.objectPath;
-    if (!objectPath) return res.status(400).send("Missing object path");
-
-    // Bucket you use for profile photos
-    const bucket = process.env.SUPABASE_BUCKET || "profile-images";
-
-    // Create a short-lived signed URL and redirect (browser will request the signed URL)
-    const expiresInSeconds = 60; // 1 minute
-    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(objectPath, expiresInSeconds);
-
-    if (error || !data?.signedURL) {
-      console.error("createSignedUrl failed for", objectPath, error);
-      return res.status(404).send("Object not found");
+    if (!objectPath) {
+      return res.status(400).send("Missing object path");
     }
 
-    // Optional: set a short cache-control for the redirect response so proxies don't cache the redirect long-term.
-    res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    // Remove leading slash if present
+    const normalizedPath = objectPath.startsWith('/') ? objectPath.substring(1) : objectPath;
+    const bucket = process.env.SUPABASE_BUCKET || "profile-images";
+    
+    // If path starts with "objects/", strip that out
+    let finalPath = normalizedPath;
+    if (finalPath.startsWith('objects/')) {
+      finalPath = finalPath.substring(8);
+    }
+    
+    console.log(`Getting public URL: bucket=${bucket}, path=${finalPath}`);
+    
+    try {
+      // Get public URL instead of signed URL
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .getPublicUrl(finalPath);
+      
+      if (error) {
+        console.error(`Public URL error for ${bucket}/${finalPath}:`, error);
+        return res.status(404).send(`Image not found: ${error.message}`);
+      }
 
-    // Redirect browser to the signed URL (it will fetch actual asset)
-    return res.redirect(302, data.signedURL);
+      if (!data?.publicUrl) {
+        console.error(`No public URL returned for ${bucket}/${finalPath}`);
+        return res.status(404).send("Image not found - no public URL returned");
+      }
+
+      console.log(`Redirecting to public URL: ${data.publicUrl}`);
+      
+      // Set cache headers for better performance
+      res.setHeader("Cache-Control", "public, max-age=86400"); // Cache for 24 hours
+      return res.redirect(302, data.publicUrl);
+      
+    } catch (err) {
+      console.error(`Error getting public URL for ${bucket}/${finalPath}:`, err);
+      return res.status(500).send("Server error generating image URL");
+    }
   } catch (err) {
-    console.error("Error serving object:", err);
+    console.error("Error in objects route:", err);
     return res.status(500).send("Server error");
   }
 });
+
+app.post("/api/direct-upload", upload.single('file'), async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    // Get authenticated user
+    const userId = (req.session as any)?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    // Basic validation
+    if (!file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: "Only image files are allowed" });
+    }
+
+    const bucket = process.env.SUPABASE_BUCKET || "profile-images";
+    const userPrefix = userId.substring(0, 8); // First 8 chars of UUID
+    const timestamp = Date.now();
+    const sanitizedFilename = file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const finalPath = `${userPrefix}/${timestamp}_${sanitizedFilename}`;
+    
+    console.log(`Uploading file directly to bucket=${bucket}, path=${finalPath}`);
+    
+    // Upload the file directly to Supabase storage
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .upload(finalPath, file.buffer, {
+        contentType: file.mimetype,
+        cacheControl: '86400', // 24 hours
+        upsert: true // Overwrite if exists
+      });
+
+    if (error) {
+      console.error("Supabase upload failed:", error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    console.log(`✓ File successfully uploaded to ${bucket}/${finalPath}`);
+
+    // Get the public URL immediately
+    const { data: urlData } = await supabase.storage
+      .from(bucket)
+      .getPublicUrl(finalPath);
+
+    // Return public URL and path info
+    return res.json({ 
+      success: true, 
+      path: finalPath,
+      fullPath: `${bucket}/${finalPath}`,
+      publicUrl: urlData?.publicUrl || null
+    });
+  } catch (err) {
+    console.error("Error in direct upload:", err);
+    return res.status(500).json({ error: "File upload failed" });
+  }
+});
+
+
   // -----------------------------
   // MESSAGING ROUTES
   // -----------------------------
@@ -854,6 +1041,83 @@ app.get("/objects/:objectPath(*)", async (req, res) => {
     // If you have an isRead column, update messages here.
     res.json({ success: true });
   });
+app.post("/api/auth/reset-password-request", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    // Check if user exists (but don't reveal this information to the client)
+    const user = await storage.getUserByEmail(email);
+    
+    // Only proceed if user exists
+    if (user) {
+      // Generate a unique token with an expiration (usually 24 hours)
+      const token = crypto.randomBytes(32).toString('hex');
+      const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+      
+      // Save the token in your database
+      await storage.savePasswordResetToken(user.id, token, expires);
+      
+      // Create a reset link
+      const resetLink = `${process.env.SITE_URL || 'http://localhost:5000'}/reset-password?token=${token}`;
+      
+      // Log the link in development (in production, you'd send an email)
+      console.log('PASSWORD RESET LINK:', resetLink);
+      
+      // TODO: Send email with reset link
+      // await sendPasswordResetEmail(email, resetLink);
+    }
+    
+    // Always return success response, even if user doesn't exist
+    return res.status(200).json({ 
+      message: "If the email exists, a password reset link has been sent." 
+    });
+    
+  } catch (error) {
+    console.error("Password reset request error:", error);
+    return res.status(500).json({ 
+      error: "Error processing your request. Please try again later." 
+    });
+  }
+});
+// In routes.ts
+app.post("/api/auth/reset-password-request", async (req, res) => {
+  try {
+    const { email, captchaToken } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+    
+    if (!captchaToken) {
+      return res.status(400).json({ error: "CAPTCHA verification failed" });
+    }
+    
+    // Verify the captcha token with Google
+    const recaptchaVerification = await fetch(`https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`, {
+      method: 'POST'
+    });
+    
+    const recaptchaData = await recaptchaVerification.json();
+    
+    if (!recaptchaData.success) {
+      return res.status(400).json({ error: "CAPTCHA verification failed" });
+    }
+    
+    // Rest of the password reset logic...
+    // Check if user exists, generate token, etc.
+    
+    return res.status(200).json({ 
+      message: "If the email exists, a password reset link has been sent." 
+    });
+  } catch (error) {
+    console.error("Password reset request error:", error);
+    return res.status(500).json({ 
+      error: "Error processing your request. Please try again later." 
+    });
+  }
+});
 
   // --- STATIC SERVING (ALWAYS LAST) ---
   const publicDir = path.join(__dirname, "public");

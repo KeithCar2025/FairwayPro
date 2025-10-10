@@ -37,8 +37,10 @@ app.use(
         "img-src": ["'self'", "data:", "blob:", "https://*.supabase.co"],
         // If you render uploaded videos (Uppy previews or Supabase files)
         "media-src": ["'self'", "data:", "blob:", "https://*.supabase.co"],
-        // Allow Google maps iframe
-        "frame-src": ["'self'", "https://www.google.com"],
+        // Allow Google maps iframe and reCAPTCHA
+        "frame-src": ["'self'", "https://www.google.com", "https://recaptcha.google.com"],
+        // Add this directive for reCAPTCHA
+        "script-src": ["'self'", "https://www.google.com", "https://www.gstatic.com", "https://www.recaptcha.net"],
         // Optional (if you use inline styles or CSS-in-JS): "style-src": ["'self'", "'unsafe-inline'"],
         // Optional (if you load fonts from CDNs): "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
         // Optional (if using web workers created from blobs): "worker-src": ["'self'", "blob:"],

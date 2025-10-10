@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Search,
-  Crosshair,
   User,
   Calendar,
   MessageCircle,
@@ -32,31 +31,27 @@ interface User {
 interface HeaderProps {
   onSearch: (location: string) => void;
   onAuthClick: () => void;
+  initialValue?: string;
 }
 
-export default function Header({ onSearch, onAuthClick }: HeaderProps) {
+export default function Header({ onSearch, onAuthClick, initialValue = "" }: HeaderProps) {
   const { user, logout, refreshUser } = useAuth();
-  const [location, setLocation] = useState("");
-  const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [location, setLocation] = useState(initialValue);
+  const [isSearching, setIsSearching] = useState(false);
 
+  useEffect(() => {
+    if (initialValue) {
+      setLocation(initialValue);
+    }
+  }, [initialValue]);
+  
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (location.trim()) onSearch(location.trim());
-  };
-
-  const getCurrentLocation = () => {
-    if (!navigator.geolocation) return;
-    setIsGettingLocation(true);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        const locationName = `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`;
-        setLocation(locationName);
-        onSearch(locationName);
-        setIsGettingLocation(false);
-      },
-      () => setIsGettingLocation(false)
-    );
+    if (!location.trim()) return;
+    
+    setIsSearching(true);
+    onSearch(location.trim());
+    setTimeout(() => setIsSearching(false), 1000); // Reset after animation
   };
 
   const handleSignOut = async () => {
@@ -70,12 +65,12 @@ export default function Header({ onSearch, onAuthClick }: HeaderProps) {
     getUserDisplayName(u).slice(0, 2).toUpperCase();
 
   // Refresh user after Google login
-useEffect(() => {
-  const params = new URLSearchParams(window.location.search);
-  if (params.get("googleLoggedIn")) {
-    refreshUser().then(() => window.history.replaceState({}, "", "/"));
-  }
-}, [refreshUser]);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("googleLoggedIn")) {
+      refreshUser().then(() => window.history.replaceState({}, "", "/"));
+    }
+  }, [refreshUser]);
 
   return (
     <header className="sticky top-0 z-50 bg-background/95 backdrop-blur-md border-b border-border/40 shadow-sm">
@@ -86,63 +81,61 @@ useEffect(() => {
             <img src={logoSrc} alt="FairwayPro Logo" className="h-20 w-auto" />
           </Link>
 
-          {/* Desktop Search */}
-          <div className="flex-1 max-w-2xl mx-8 hidden md:block">
-            <form onSubmit={handleSearch}>
-              <div className="flex items-center bg-background border border-border/60 rounded-full shadow-lg hover:shadow-xl hover:border-primary/30 transition-all duration-300 backdrop-blur-sm">
-                <div className="flex-1 px-6 py-4">
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    Find Golf Coaches
-                  </label>
-                  <Input
-                    type="text"
-                    placeholder="Enter city, state, or zip code"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    className="border-0 p-0 text-sm font-medium focus-visible:ring-0 bg-transparent placeholder:text-muted-foreground/60"
-                  />
+          {/* Desktop Search - With Icon Inside */}
+          <div className="flex-1 max-w-md mx-4 md:mx-8 hidden md:block">
+            <form onSubmit={handleSearch} className="relative">
+              <div className="relative">
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none">
+                  <Search className={`w-4 h-4 ${isSearching ? 'animate-pulse text-primary' : ''}`} />
                 </div>
-                <div className="flex items-center gap-1 pr-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={getCurrentLocation}
-                    disabled={isGettingLocation}
-                    className="rounded-full w-10 h-10 p-0 hover:bg-muted/50 transition-colors"
-                  >
-                    <Crosshair
-                      className={`w-4 h-4 ${isGettingLocation ? "animate-spin text-primary" : "text-muted-foreground"}`}
-                    />
-                  </Button>
-                  <Button
-                    type="submit"
-                    size="sm"
-                    className="rounded-full bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary text-primary-foreground w-12 h-12 shadow-lg shadow-primary/25 hover:shadow-xl hover:shadow-primary/30 transition-all duration-200"
-                  >
-                    <Search className="w-5 h-5" />
-                  </Button>
-                </div>
+                <Input
+                  type="text"
+                  placeholder="Enter city, state, or zip code"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  className="border-border/60 rounded-full py-6 pl-12 pr-4 bg-background/50 shadow-md hover:shadow-lg focus-within:shadow-lg hover:border-primary/30 transition-all duration-300 focus-visible:ring-1 focus-visible:ring-primary/30 placeholder:text-muted-foreground/70"
+                  data-testid="input-location"
+                />
+                <Button
+                  type="submit"
+                  disabled={isSearching}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded-full bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary text-primary-foreground w-10 h-10 shadow-md shadow-primary/25 hover:shadow-lg hover:shadow-primary/30 transition-all duration-200"
+                >
+                  <Search className="w-4 h-4" />
+                </Button>
               </div>
             </form>
           </div>
 
-          {/* Mobile Search */}
-          <div className="flex-1 mx-4 md:hidden">
-            <Button
-              variant="outline"
-              className="w-full justify-start text-muted-foreground border-border/60 bg-background/50 backdrop-blur-sm hover:bg-muted/50 hover:border-primary/30 transition-all duration-200"
-              onClick={() =>
-                (document.querySelector('[data-testid="input-location"]') as HTMLInputElement)?.focus()
-              }
-            >
-              <Search className="w-4 h-4 mr-2 text-primary/70" />
-              <span className="truncate">Find golf coaches...</span>
-            </Button>
+          {/* Mobile Search - With Icon Inside */}
+          <div className="flex-1 md:hidden">
+            <form onSubmit={handleSearch} className="relative">
+              <div className="relative">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none">
+                  <Search className={`w-4 h-4 ${isSearching ? 'animate-pulse text-primary' : ''}`} />
+                </div>
+                <Input
+                  type="text"
+                  placeholder="Enter city, state, or zip code"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  className="border-border/60 rounded-full py-5 pl-10 pr-12 bg-background/50 backdrop-blur-sm hover:bg-muted/10 hover:border-primary/30 transition-all duration-200 focus-visible:ring-1 focus-visible:ring-primary/30"
+                  data-testid="input-location-mobile"
+                />
+                <Button
+                  type="submit"
+                  disabled={isSearching}
+                  size="sm"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded-full bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary text-primary-foreground w-8 h-8 p-0 shadow-md shadow-primary/25 hover:shadow-lg hover:shadow-primary/30 transition-all duration-200"
+                >
+                  <Search className="w-3 h-3" />
+                </Button>
+              </div>
+            </form>
           </div>
 
           {/* Auth / Profile */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 ml-2">
             {user ? (
               <>
                 {/* Desktop Menu */}

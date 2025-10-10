@@ -229,27 +229,31 @@ export default function CoachEditProfile() {
     }
   });
 
-  useEffect(() => {
-    if (coachProfile) {
-      form.reset({
-        ...coachProfile,
-        currentPassword: "",
-        newPassword: "",
-        confirmPassword: "",
-        specialties: coachProfile.specialties || [],
-        tools: coachProfile.tools || [],
-        certifications: coachProfile.certifications || [],
-        videos: coachProfile.videos || [],
-        image: coachProfile.image || "",
-        googleCalendarConnected: !!coachProfile.googleCalendarConnected,
-      });
-      setSelectedSpecialties(coachProfile.specialties || []);
-      setSelectedTools(coachProfile.tools || []);
-      setSelectedCertifications(coachProfile.certifications || []);
-      setVideos(coachProfile.videos || []);
-      setGoogleCalendarConnected(!!coachProfile.googleCalendarConnected);
-    }
-  }, [coachProfile, form]);
+ useEffect(() => {
+  if (coachProfile) {
+    form.reset({
+      ...coachProfile,
+      // Explicitly parse yearsExperience as a number
+      yearsExperience: coachProfile.yearsExperience ? Number(coachProfile.yearsExperience) : 5,
+      // Also ensure pricePerHour is properly parsed
+      pricePerHour: coachProfile.pricePerHour ? Number(coachProfile.pricePerHour) : 75,
+      currentPassword: "",
+      newPassword: "",
+      confirmPassword: "",
+      specialties: coachProfile.specialties || [],
+      tools: coachProfile.tools || [],
+      certifications: coachProfile.certifications || [],
+      videos: coachProfile.videos || [],
+      image: coachProfile.image || "",
+      googleCalendarConnected: !!coachProfile.googleCalendarConnected,
+    });
+    setSelectedSpecialties(coachProfile.specialties || []);
+    setSelectedTools(coachProfile.tools || []);
+    setSelectedCertifications(coachProfile.certifications || []);
+    setVideos(coachProfile.videos || []);
+    setGoogleCalendarConnected(!!coachProfile.googleCalendarConnected);
+  }
+}, [coachProfile, form]);
 
   // EDIT MUTATION
   const editCoachMutation = useMutation({
@@ -337,50 +341,83 @@ export default function CoachEditProfile() {
   };
 
   // Profile image upload
-  const handleGetUploadParameters = async (uppyFile) => {
-    const file = uppyFile.data;
-    // Decide the final storage key on the client (or do it on the server)
-    const objectPath = `profile-images/${Date.now()}_${file.name}`;
+// Update the handleGetUploadParameters and handleImageUploadComplete functions
 
+const handleGetUploadParameters = async (uppyFile) => {
+  const file = uppyFile.data;
+  console.log("Preparing to upload file:", file.name);
+  
+  // Simple filename without path - server will handle path construction
+  const objectPath = file.name;
+
+  try {
     const response = await fetch('/api/objects/upload', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        objectPath,                 // tell server where this will live
+        objectPath,
         contentType: file.type,
       }),
     });
-    if (!response.ok) throw new Error('Failed to get upload URL');
-    const { uploadURL } = await response.json();
-
-    // Stash objectPath on the file for later
-    uppyFile.meta = { ...(uppyFile.meta || {}), objectPath };
-
-    return { method: 'PUT', url: uploadURL, headers: { 'Content-Type': file.type } };
-  };
-
-  const handleImageUploadComplete = async (result: any) => {
-    setIsUploadingImage(true);
-    try {
-      if (!result.successful?.length) return;
-
-      const uploadedFile = result.successful[0];
-      const objectPath = uploadedFile?.meta?.objectPath;
-      if (!objectPath) throw new Error("Missing objectPath from upload");
-
-      // Use your proxy which generates a short-lived signed URL on every request
-      const stableUrl = `/objects/${objectPath}`;
-
-      // Set a stable URL in the form (NOT a blob: URL, NOT the upload PUT URL)
-      form.setValue('image', stableUrl, { shouldValidate: true });
-      toast({ title: "Profile Image Uploaded" });
-    } catch (e: any) {
-      toast({ title: "Upload Failed", description: e.message, variant: "destructive" });
-    } finally {
-      setIsUploadingImage(false);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Upload parameter error:", errorText);
+      throw new Error(`Failed to get upload URL: ${response.status} ${errorText}`);
     }
-  };
+    
+    const data = await response.json();
+    console.log("Got upload parameters:", data);
+    
+    // Store the path returned by the server in the file's metadata
+    uppyFile.meta = { 
+      ...(uppyFile.meta || {}), 
+      objectPath: data.objectPath 
+    };
+    
+    return { 
+      method: 'PUT', 
+      url: data.uploadURL, 
+      headers: { 'Content-Type': file.type }
+    };
+  } catch (err) {
+    console.error("Failed to get upload parameters:", err);
+    throw err;
+  }
+};
+// In CoachEditProfile.jsx
+const handleImageUploadComplete = async (result) => {
+  try {
+    console.log("Image upload complete:", result);
+    
+    if (!result.successful?.length) {
+      console.error("No successful uploads");
+      return;
+    }
+
+    // Get path from the result
+    const objectPath = result.successful[0]?.meta?.objectPath;
+    if (!objectPath) {
+      throw new Error("Missing path from upload");
+    }
+
+    // Use the correct URL format to reference the file
+    const stableUrl = `/objects/${objectPath}`;
+    console.log("Setting image URL to:", stableUrl);
+
+    // Set form value
+    form.setValue('image', stableUrl, { shouldValidate: true });
+    
+  } catch (e) {
+    console.error("Upload processing error:", e);
+    toast({
+      title: "Upload Failed",
+      description: e.message || "Failed to process upload",
+      variant: "destructive"
+    });
+  }
+};
 
   // Video upload logic
   const handleVideoUpload = (videoIndex: number) => async (result: any) => {
@@ -931,17 +968,17 @@ export default function CoachEditProfile() {
                             )}
                           </div>
                           <div className="flex-1">
-                            <ObjectUploader
-                              maxNumberOfFiles={1}
-                              maxFileSize={5242880}
-                              onGetUploadParameters={handleGetUploadParameters}
-                              onComplete={handleImageUploadComplete}
-                            >
-                              <button type="button" className="w-full sm:w-auto">
-                                <Upload className="w-4 h-4 mr-2" />
-                                {form.watch("image") ? 'Change Photo' : 'Upload Photo'}
-                              </button>
-                            </ObjectUploader>
+<ObjectUploader
+  maxNumberOfFiles={1}
+  maxFileSize={5242880}
+  onGetUploadParameters={handleGetUploadParameters}
+  onComplete={handleImageUploadComplete}
+>
+  <button type="button" className="w-full sm:w-auto">
+    <Upload className="w-4 h-4 mr-2" />
+    {form.watch("image") ? 'Change Photo' : 'Upload Photo'}
+  </button>
+</ObjectUploader>
                             <p className="text-sm text-muted-foreground mt-1">
                               JPG, PNG, GIF up to 5MB. Recommended: 400x400px
                             </p>

@@ -27,6 +27,7 @@ import MyBookings from "@/pages/my-bookings";
 import NotFound from "@/pages/not-found";
 import Profile from "@/pages/profile";
 import CoachEditProfile from "@/components/CoachEditProfile";
+import ResetPasswordPage from "@/pages/reset-password"; 
 
 // ------------------ React Query Client ------------------
 const queryClient = new QueryClient();
@@ -95,6 +96,8 @@ function App() {
             <Route path="/profile" component={Profile} />
             <Route path="/404" component={NotFound} />
             <Route path="/coach/edit-profile" component={CoachEditProfile} />
+			 <Route path="/reset-password" component={ResetPasswordPage} />
+			
             <Route>
               <NotFound />
             </Route>
@@ -428,7 +431,38 @@ function HomePage() {
     setShowBookingModal(false);
     setSelectedCoach(null);
   };
-
+const geocodeSearchLocation = async (address: string) => {
+  if (!address) return;
+  
+  try {
+    // Use your existing geocode API endpoint
+    const res = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`, { 
+      credentials: "include" 
+    });
+    
+    const data = await res.json();
+    
+    if (data.status === "OK" && data.results?.[0]) {
+      const { lat, lng } = data.results[0].geometry.location;
+      // Update the userCoords with the searched location
+      setUserCoords({ lat, lng });
+      return { lat, lng };
+    } else {
+      console.warn("Geocoding failed:", data.status, data.error_message);
+      return null;
+    }
+  } catch (error) {
+    console.error("Geocoding error:", error);
+    return null;
+  }
+};
+useEffect(() => {
+  // Only geocode if we have a search location
+  if (searchLocation?.trim()) {
+    setGeoStatus("granted"); // Update status to show we're using a location
+    geocodeSearchLocation(searchLocation);
+  }
+}, [searchLocation]);
   // UI banner prompting for location permissions if needed
   const showGeoPrompt =
     geoStatus === "idle" ||
@@ -439,7 +473,7 @@ function HomePage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Header onAuthClick={() => openAuthModal()} onSearch={setSearchLocation} />
+      <Header onAuthClick={() => openAuthModal()} onSearch={setSearchLocation} initialValue={searchLocation}/>
       <HeroSection onSearch={(loc) => setSearchLocation(loc)} />
 
       {showGeoPrompt && (
