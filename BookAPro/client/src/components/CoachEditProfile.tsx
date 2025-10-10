@@ -12,17 +12,21 @@ import { Form } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { X, Plus, Upload, MapPin, DollarSign, Award, Camera, Star, Calendar as CalendarIcon, Link2 } from "lucide-react";
+import { X, Plus, Upload, MapPin, DollarSign, Award, Camera, Star, Calendar as CalendarIcon, Link2, Eye, EyeOff, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import LocationAutocomplete from "@/components/LocationAutocomplete";
+import zxcvbn from "zxcvbn";
 
 // VALIDATION SCHEMA
 const coachEditSchema = z.object({
   email: z.string().email("Invalid email address"),
-  password: z.string().min(4, "Password must be at least 6 characters").optional(),
+  // Password fields are all optional since they're only needed for password change
+  currentPassword: z.string().optional(),
+  newPassword: z.string().optional(),
+  confirmPassword: z.string().optional(),
   name: z.string().min(2, "Name must be at least 2 characters"),
   bio: z.string().min(50, "Bio must be at least 50 characters").max(500, "Bio must be less than 500 characters"),
   location: z.string().min(3, "Location is required"),
@@ -53,10 +57,35 @@ const coachEditSchema = z.object({
     isUploadingVideo: z.boolean().optional(),
     isUploadingThumbnail: z.boolean().optional()
   }))
+}).refine((data) => {
+  // If any password field is filled, all must be filled
+  const hasCurrentPassword = !!data.currentPassword;
+  const hasNewPassword = !!data.newPassword;
+  const hasConfirmPassword = !!data.confirmPassword;
+  
+  // Either all password fields are empty (no password change)
+  // or all password fields are filled (password change)
+  return (
+    (!hasCurrentPassword && !hasNewPassword && !hasConfirmPassword) ||
+    (hasCurrentPassword && hasNewPassword && hasConfirmPassword)
+  );
+}, {
+  message: "All password fields are required for password change",
+  path: ["newPassword"],
+}).refine((data) => {
+  // Check if passwords match
+  if (data.newPassword && data.confirmPassword) {
+    return data.newPassword === data.confirmPassword;
+  }
+  return true;
+}, {
+  message: "Passwords don't match",
+  path: ["confirmPassword"],
 });
 
 type CoachEditForm = z.infer<typeof coachEditSchema>;
 
+// Rest of your constants
 const GOLF_SPECIALTIES = [
   "Swing Analysis", "Putting", "Short Game", "Course Strategy", "Mental Game",
   "Beginner Instruction", "Advanced Techniques", "Junior Programs",
@@ -89,9 +118,6 @@ const AVAILABILITY_OPTIONS = [
   "By appointment only"
 ];
 
-// GOOGLE GEOCODE API KEY
-const GOOGLE_GEOCODE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
-
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
   if (!address) return null;
   const res = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`, { credentials: "include" });
@@ -114,6 +140,12 @@ export default function CoachEditProfile() {
   const [videos, setVideos] = useState<Array<CoachEditForm["videos"][number]>>([]);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false);
+  const [showPasswords, setShowPasswords] = useState(false);
+  
+  // Password strength states
+  const [pwScore, setPwScore] = useState<number>(0); // 0..4
+  const [pwFeedback, setPwFeedback] = useState<string | null>(null);
+  const minAcceptableScore = 3; // require 3+ (Good/Excellent)
 
   // New: geocoding UI state
   const [isGeocoding, setIsGeocoding] = useState(false);
@@ -123,7 +155,9 @@ export default function CoachEditProfile() {
     resolver: zodResolver(coachEditSchema),
     defaultValues: {
       email: "",
-      password: "",
+      currentPassword: "",
+      newPassword: "",
+      confirmPassword: "",
       name: "",
       bio: "",
       location: "",
@@ -144,6 +178,47 @@ export default function CoachEditProfile() {
     },
   });
 
+  // Monitor password for strength
+  const newPassword = form.watch("newPassword");
+  const name = form.watch("name");
+  const email = form.watch("email");
+
+  // Update password strength when password, name, or email changes
+  useEffect(() => {
+    if (!newPassword) {
+      setPwScore(0);
+      setPwFeedback(null);
+      return;
+    }
+    try {
+      const res = zxcvbn(newPassword, [email, name]);
+      setPwScore(res.score);
+      const advice = res.feedback?.warning ? res.feedback.warning : (res.feedback?.suggestions?.join(" ") || null);
+      setPwFeedback(advice);
+    } catch (err) {
+      // if zxcvbn fails for any reason, default to 0
+      setPwScore(0);
+      setPwFeedback(null);
+    }
+  }, [newPassword, email, name]);
+
+  const scoreLabel = (score: number) => {
+    switch (score) {
+      case 0:
+        return { label: "Very weak", color: "bg-red-500", pct: 20 };
+      case 1:
+        return { label: "Weak", color: "bg-orange-500", pct: 40 };
+      case 2:
+        return { label: "Fair", color: "bg-yellow-400", pct: 60 };
+      case 3:
+        return { label: "Good", color: "bg-green-500", pct: 80 };
+      case 4:
+        return { label: "Excellent", color: "bg-green-700", pct: 100 };
+      default:
+        return { label: "Very weak", color: "bg-red-500", pct: 0 };
+    }
+  };
+
   // Load coach profile
   const { data: coachProfile, isLoading: loadingProfile } = useQuery({
     queryKey: ["coachProfile"],
@@ -158,6 +233,9 @@ export default function CoachEditProfile() {
     if (coachProfile) {
       form.reset({
         ...coachProfile,
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: "",
         specialties: coachProfile.specialties || [],
         tools: coachProfile.tools || [],
         certifications: coachProfile.certifications || [],
@@ -206,6 +284,37 @@ export default function CoachEditProfile() {
     },
   });
 
+  // Specialty, tool, and certification handlers
+  const addSpecialty = (specialty: string) => {
+    if (!selectedSpecialties.includes(specialty)) {
+      setSelectedSpecialties([...selectedSpecialties, specialty]);
+    }
+  };
+  
+  const removeSpecialty = (specialty: string) => {
+    setSelectedSpecialties(selectedSpecialties.filter(s => s !== specialty));
+  };
+  
+  const addTool = (tool: string) => {
+    if (!selectedTools.includes(tool)) {
+      setSelectedTools([...selectedTools, tool]);
+    }
+  };
+  
+  const removeTool = (tool: string) => {
+    setSelectedTools(selectedTools.filter(t => t !== tool));
+  };
+  
+  const addCertification = (certification: string) => {
+    if (!selectedCertifications.includes(certification)) {
+      setSelectedCertifications([...selectedCertifications, certification]);
+    }
+  };
+  
+  const removeCertification = (certification: string) => {
+    setSelectedCertifications(selectedCertifications.filter(c => c !== certification));
+  };
+
   // Google Calendar Connect/Disconnect
   const handleGoogleCalendarConnect = async () => {
     try {
@@ -214,6 +323,7 @@ export default function CoachEditProfile() {
       toast({ title: "Google Calendar Error", description: "Could not connect calendar", variant: "destructive" });
     }
   };
+  
   const handleGoogleCalendarDisconnect = async () => {
     try {
       const response = await fetch("/api/google/calendar/disconnect", { method: "POST", credentials: "include" });
@@ -227,50 +337,50 @@ export default function CoachEditProfile() {
   };
 
   // Profile image upload
-const handleGetUploadParameters = async (uppyFile) => {
-  const file = uppyFile.data;
-  // Decide the final storage key on the client (or do it on the server)
-  const objectPath = `profile-images/${Date.now()}_${file.name}`;
+  const handleGetUploadParameters = async (uppyFile) => {
+    const file = uppyFile.data;
+    // Decide the final storage key on the client (or do it on the server)
+    const objectPath = `profile-images/${Date.now()}_${file.name}`;
 
-  const response = await fetch('/api/objects/upload', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      objectPath,                 // tell server where this will live
-      contentType: file.type,
-    }),
-  });
-  if (!response.ok) throw new Error('Failed to get upload URL');
-  const { uploadURL } = await response.json();
+    const response = await fetch('/api/objects/upload', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        objectPath,                 // tell server where this will live
+        contentType: file.type,
+      }),
+    });
+    if (!response.ok) throw new Error('Failed to get upload URL');
+    const { uploadURL } = await response.json();
 
-  // Stash objectPath on the file for later
-  uppyFile.meta = { ...(uppyFile.meta || {}), objectPath };
+    // Stash objectPath on the file for later
+    uppyFile.meta = { ...(uppyFile.meta || {}), objectPath };
 
-  return { method: 'PUT', url: uploadURL, headers: { 'Content-Type': file.type } };
-};
+    return { method: 'PUT', url: uploadURL, headers: { 'Content-Type': file.type } };
+  };
 
-const handleImageUploadComplete = async (result: any) => {
-  setIsUploadingImage(true);
-  try {
-    if (!result.successful?.length) return;
+  const handleImageUploadComplete = async (result: any) => {
+    setIsUploadingImage(true);
+    try {
+      if (!result.successful?.length) return;
 
-    const uploadedFile = result.successful[0];
-    const objectPath = uploadedFile?.meta?.objectPath;
-    if (!objectPath) throw new Error("Missing objectPath from upload");
+      const uploadedFile = result.successful[0];
+      const objectPath = uploadedFile?.meta?.objectPath;
+      if (!objectPath) throw new Error("Missing objectPath from upload");
 
-    // Use your proxy which generates a short-lived signed URL on every request
-    const stableUrl = `/objects/${objectPath}`;
+      // Use your proxy which generates a short-lived signed URL on every request
+      const stableUrl = `/objects/${objectPath}`;
 
-    // Set a stable URL in the form (NOT a blob: URL, NOT the upload PUT URL)
-    form.setValue('image', stableUrl, { shouldValidate: true });
-    toast({ title: "Profile Image Uploaded" });
-  } catch (e: any) {
-    toast({ title: "Upload Failed", description: e.message, variant: "destructive" });
-  } finally {
-    setIsUploadingImage(false);
-  }
-};
+      // Set a stable URL in the form (NOT a blob: URL, NOT the upload PUT URL)
+      form.setValue('image', stableUrl, { shouldValidate: true });
+      toast({ title: "Profile Image Uploaded" });
+    } catch (e: any) {
+      toast({ title: "Upload Failed", description: e.message, variant: "destructive" });
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
 
   // Video upload logic
   const handleVideoUpload = (videoIndex: number) => async (result: any) => {
@@ -410,15 +520,38 @@ const handleImageUploadComplete = async (result: any) => {
       return;
     }
 
-    editCoachMutation.mutate({
+    // Check password strength if changing password
+    if (data.newPassword) {
+      if (pwScore < minAcceptableScore) {
+        toast({
+          title: "Password too weak",
+          description: "Please choose a stronger password.",
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+
+    // Prepare data for submission
+    const submitData = {
       ...data,
       specialties: selectedSpecialties,
       tools: selectedTools,
       certifications: selectedCertifications,
       videos,
       image: data.image,
-      googleCalendarConnected
-    });
+      googleCalendarConnected,
+      // Only include password fields if changing password
+      ...(data.currentPassword ? {
+        currentPassword: data.currentPassword,
+        newPassword: data.newPassword,
+      } : {})
+    };
+
+    // Remove confirmPassword since it's only for client-side validation
+    delete submitData.confirmPassword;
+
+    editCoachMutation.mutate(submitData);
   };
 
   if (loadingProfile) {
@@ -476,19 +609,117 @@ const handleImageUploadComplete = async (result: any) => {
                           </FormItem>
                         )}
                       />
-                      <FormField
-                        control={form.control}
-                        name="password"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Change Password</FormLabel>
-                            <FormControl>
-                              <Input type="password" placeholder="********" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                      
+                      {/* Password Change Section */}
+                      <div className="space-y-4 pt-4 pb-2">
+                        <div className="border-t pt-4">
+                          <h3 className="text-base font-medium mb-2">Change Password</h3>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Leave blank if you don't want to change your password
+                          </p>
+
+                          {/* Current Password */}
+                          <FormField
+                            control={form.control}
+                            name="currentPassword"
+                            render={({ field }) => (
+                              <FormItem className="mb-4">
+                                <FormLabel>Current Password</FormLabel>
+                                <div className="relative">
+                                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+                                  <FormControl>
+                                    <Input
+                                      type={showPasswords ? "text" : "password"}
+                                      placeholder="Your current password"
+                                      className="pl-10 pr-10"
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowPasswords(!showPasswords)}
+                                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground"
+                                  >
+                                    {showPasswords ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                  </button>
+                                </div>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          
+                          {/* New Password */}
+                          <FormField
+                            control={form.control}
+                            name="newPassword"
+                            render={({ field }) => (
+                              <FormItem className="mb-4">
+                                <FormLabel>New Password</FormLabel>
+                                <div className="relative">
+                                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+                                  <FormControl>
+                                    <Input
+                                      type={showPasswords ? "text" : "password"}
+                                      placeholder="Create a new password"
+                                      className="pl-10 pr-10"
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowPasswords(!showPasswords)}
+                                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-muted-foreground"
+                                  >
+                                    {showPasswords ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                  </button>
+                                </div>
+                                <FormMessage />
+                                
+                                {/* Password strength meter */}
+                                {field.value && (
+                                  <div className="mt-3">
+                                    <div className="w-full bg-gray-200 h-2 rounded">
+                                      <div
+                                        style={{ width: `${scoreLabel(pwScore).pct}%` }}
+                                        className={`${scoreLabel(pwScore).color} h-2 rounded`}
+                                      />
+                                    </div>
+                                    <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                                      <span>{scoreLabel(pwScore).label}</span>
+                                      <span>{pwScore < minAcceptableScore ? "Password too weak" : "OK"}</span>
+                                    </div>
+                                    {pwFeedback && <div className="text-xs text-muted-foreground mt-1">{pwFeedback}</div>}
+                                  </div>
+                                )}
+                              </FormItem>
+                            )}
+                          />
+                          
+                          {/* Confirm Password */}
+                          <FormField
+                            control={form.control}
+                            name="confirmPassword"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Confirm New Password</FormLabel>
+                                <div className="relative">
+                                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+                                  <FormControl>
+                                    <Input
+                                      type={showPasswords ? "text" : "password"}
+                                      placeholder="Confirm your new password"
+                                      className="pl-10"
+                                      {...field}
+                                    />
+                                  </FormControl>
+                                </div>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      </div>
+
                       <FormField
                         control={form.control}
                         name="name"
@@ -534,17 +765,10 @@ const handleImageUploadComplete = async (result: any) => {
                                 Location *
                               </FormLabel>
                               <FormControl>
-                                {/* If LocationAutocomplete is stuck, temporarily replace with <Input> to test */}
                                 <LocationAutocomplete
                                   value={locationValue}
                                   onChange={handleLocationInput}
                                 />
-                                {/* Fallback example: */}
-                                {/* <Input
-                                  value={locationValue || ""}
-                                  onChange={(e) => handleLocationInput(e.target.value)}
-                                  placeholder="123 Main St, City, State"
-                                /> */}
                               </FormControl>
                               <div className="text-xs mt-1">
                                 {isGeocoding && <span className="text-muted-foreground">Geocoding address…</span>}
@@ -1075,7 +1299,7 @@ const handleImageUploadComplete = async (result: any) => {
                   type="submit"
                   variant="default"
                   data-testid="button-save-edit"
-                  disabled={isUploadingImage || editCoachMutation.isLoading}
+                  disabled={isUploadingImage || editCoachMutation.isLoading || (form.watch("newPassword") && pwScore < minAcceptableScore)}
                 >
                   {isUploadingImage ? "Uploading..." : "Save Changes"}
                 </Button>
